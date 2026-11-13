@@ -53,7 +53,7 @@
   }
   .wrap { max-width: 1180px; margin: 0 auto; }
   header { padding: 24px 0 8px; }
-  h1 { font-size: 26px; line-height: 1.2; margin: 0 0 4px; }
+  h1 { font-size: 30px; line-height: 1.2; margin: 0 0 4px; }
   .sub { color: var(--ink-soft); margin: 0; }
   :focus-visible {
     outline: 3px solid var(--focus);
@@ -78,7 +78,7 @@
 
   .cols {
     display: grid;
-    grid-template-columns: 300px minmax(0, 1fr) 320px;
+    grid-template-columns: 264px minmax(0, 1fr) 300px;
     gap: 18px;
     margin-top: 18px;
     align-items: start;
@@ -123,7 +123,7 @@
   svg.map { width: 100%; height: auto; display: block; background: #eceff3; border-radius: 10px; border: 1px solid var(--line); }
   svg.map:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
   .road { stroke: #ffffff; stroke-width: 1.4; stroke-opacity: .85; }
-  .road.blocked { stroke: #8d8d8d; stroke-width: 1; stroke-dasharray: 2 3; stroke-opacity: .9; }
+  .road.blocked { stroke: #8d8d8d; stroke-width: 1; stroke-dasharray: 2 3; stroke-opacity: .45; }
   .tile { stroke: #ffffff; stroke-width: .5; fill-opacity: .9; }
   .tile.avoided { stroke: var(--route); stroke-width: 2.4; stroke-dasharray: 5 3; }
   .route-outline { fill: none; stroke: #000; stroke-width: 9; stroke-linejoin: round; stroke-linecap: round; }
@@ -132,6 +132,7 @@
   .cursor-ring { fill: none; stroke: var(--focus); stroke-width: 3; }
 
   .legend { font-size: 13px; }
+  #legend-rows { display: flex; flex-wrap: wrap; gap: 2px 20px; }
   #legend-rows > div { display: flex; align-items: center; gap: 8px; padding: 2px 0; }
   .legend i { width: 18px; height: 12px; border: 1px solid #fff; outline: 1px solid #c9ced6; flex: 0 0 auto; }
   .legend .note { display: block; color: var(--ink-soft); font-size: 12px; margin-top: 8px; line-height: 1.45; }
@@ -140,8 +141,8 @@
   #tile-readout b { color: var(--ink); }
 
   .card-head { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
-  .stat { font-size: 15px; }
-  .stat b { font-size: 22px; font-variant-numeric: tabular-nums; }
+  .stat { font-size: 15px; color: var(--ink-soft); }
+  .stat b { font-size: 28px; font-variant-numeric: tabular-nums; }
   #result-body p { margin: 8px 0; }
   #result-body ul { margin: 6px 0 10px; padding-left: 20px; }
   #result-body li { margin: 3px 0; }
@@ -232,6 +233,7 @@
       <h3>Layers</h3>
       <div class="btn-row">
         <button id="btn-baseline" aria-pressed="false" disabled>Show normal route</button>
+        <button id="btn-zoom" aria-pressed="true">Zoom to route: on</button>
       </div>
       <h3>Data</h3>
       <div class="btn-row">
@@ -243,11 +245,6 @@
       <p class="hint" id="file-hint">Pick <code>results/flood_tiles.geojson</code> from ticket E1. Nothing is uploaded; the file is read in your browser.</p>
     </div>
 
-    <div class="panel legend">
-      <h2>New floodwater, after &minus; before</h2>
-      <div id="legend-rows"></div>
-      <span class="note" id="legend-note"></span>
-    </div>
   </div>
 
   <!-- ------------------------------------------------ map -->
@@ -256,6 +253,11 @@
       <svg class="map" id="map" viewBox="0 0 820 820" tabindex="0" role="img"
            aria-label="Flood map of west Houston. Blue rectangles are photographed tiles shaded by how much new floodwater the model estimated. White lines are the simulated street grid. Use the arrow keys to move the cursor."></svg>
       <p id="tile-readout" aria-live="polite"></p>
+    </div>
+    <div class="panel legend" style="margin-top:14px;">
+      <h2>New floodwater, after &minus; before</h2>
+      <div id="legend-rows"></div>
+      <span class="note" id="legend-note"></span>
     </div>
   </div>
 
@@ -504,6 +506,7 @@ let TILES = buildSampleTiles();
 let REAL_DATA = false;
 let recheckOn = true;
 let showBaseline = false;
+let zoomToRoute = true;
 let start = null, end = null, result = null;
 let cursor = { i: 10, j: 26 };
 let clickTurn = 0;
@@ -777,6 +780,27 @@ function draw() {
   }
 
   svg.append(gTiles, gRoads, gRoute, gMarks);
+  updateViewBox();
+}
+
+/* Zoom the frame onto the route so it fills the map instead of sitting in a
+   corner. The projection does not change - only the window onto it - so stroke
+   widths grow with the zoom and stay legible from the back of a room. */
+function updateViewBox() {
+  const whole = "0 0 " + SVG_W + " " + SVG_H;
+  if (!zoomToRoute || !result || result.status !== "ok" || result.coords.length < 2) {
+    svg.setAttribute("viewBox", whole); return;
+  }
+  const pts = result.coords.concat(result.baseline ? result.baseline.coords : []);
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const [lon, lat] of pts) {
+    const [x, y] = px(lat, lon);
+    x0 = Math.min(x0, x); x1 = Math.max(x1, x);
+    y0 = Math.min(y0, y); y1 = Math.max(y1, y);
+  }
+  const side = Math.min(Math.max(x1 - x0, y1 - y0) * 1.8 + 90, Math.max(SVG_W, SVG_H));
+  const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
+  svg.setAttribute("viewBox", (cx - side / 2) + " " + (cy - side / 2) + " " + side + " " + side);
 }
 
 function readout(t) {
@@ -911,7 +935,9 @@ function setEndpoint(pt, which) {
 
 svg.addEventListener("click", ev => {
   const r = svg.getBoundingClientRect();
-  const x = (ev.clientX - r.left) / r.width * SVG_W, y = (ev.clientY - r.top) / r.height * SVG_H;
+  const vb = svg.viewBox.baseVal;
+  const x = vb.x + (ev.clientX - r.left) / r.width * vb.width;
+  const y = vb.y + (ev.clientY - r.top) / r.height * vb.height;
   const lon = BBOX.w + x / SVG_W * (BBOX.e - BBOX.w);
   const lat = BBOX.n - y / SVG_H * (BBOX.n - BBOX.s);
   setEndpoint({ lat, lon }, clickTurn++ % 2 === 0 ? "start" : "end");
@@ -967,6 +993,13 @@ document.getElementById("btn-baseline").addEventListener("click", ev => {
   showBaseline = !showBaseline;
   ev.currentTarget.setAttribute("aria-pressed", String(showBaseline));
   ev.currentTarget.textContent = showBaseline ? "Hide normal route" : "Show normal route";
+  draw();
+});
+
+document.getElementById("btn-zoom").addEventListener("click", ev => {
+  zoomToRoute = !zoomToRoute;
+  ev.currentTarget.setAttribute("aria-pressed", String(zoomToRoute));
+  ev.currentTarget.textContent = "Zoom to route: " + (zoomToRoute ? "on" : "off");
   draw();
 });
 
