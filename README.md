@@ -22,3 +22,27 @@ Most flood deaths happen in vehicles. Flood Safe Route gives residents, first re
 
 ## Built for
 UTSA × Dell GB10 Datathon, November 2026
+
+## Try the demo
+
+No install, no server, no internet, no GB10 — open the standalone page:
+
+```bash
+xdg-open docs/route_demo.html      # macOS: open · Windows: start
+```
+
+Click **Showcase route** to see the route bend around a flooded tile, then
+toggle **Recheck pass** off to see the route our first scoring pass would have
+sent you on — straight through a tile the model scored 0% and the second pass
+scored 95%.
+
+The percentages shipped in that page are sample data, and the page says so. To
+show the real Qwen3-VL results, export them and load the file:
+
+```bash
+python3 scripts/export_tiles.py    # writes results/flood_tiles.geojson
+```
+
+Then click **Load real scores** in the page and pick that file.
+
+`docs/DEMO_SCRIPT.md` has the three-minute pitch sequence.
