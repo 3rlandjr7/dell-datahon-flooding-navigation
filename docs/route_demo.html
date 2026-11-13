@@ -1,0 +1,1060 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Flood Safe Route — Demo</title>
+<!--
+  Flood Safe Route — standalone demo page (decision D16)
+
+  Open this file by double-clicking it. No server, no dataset, no GB10, no internet.
+  It is the backup demo if the Flask app (saferoute/) is not ready.
+
+  WHAT IS REAL AND WHAT IS NOT
+  ----------------------------
+  The flood percentages built into this file are SAMPLE DATA, generated to be
+  plausible for the west Houston / Addicks-Barker area. They are NOT Qwen3-VL
+  output. The banner at the top of the page says so, and it stays there until
+  real scores are loaded.
+
+  To show the real results: run ticket E1 to produce results/flood_tiles.geojson,
+  then click "Load real scores" and pick that file. The page reads it with
+  FileReader, so it works from file:// with no server. Nothing else needs changing.
+
+  The routing rules, thresholds and cost model below are the real ones from the
+  ticket contracts (5.3 / 5.4, decisions D7, D8, D9, D11), applied to a simulated
+  street grid instead of the OpenStreetMap road network. Distances on the real
+  road network will differ.
+
+  The route explanation is the ticket 6.1 FALLBACK TEMPLATE, not model output —
+  there is no model to call when this page runs offline.
+-->
+<style>
+  :root {
+    --bg: #f7f8fa;
+    --panel: #ffffff;
+    --ink: #15181d;
+    --ink-soft: #4a5260;
+    --line: #d6dae1;
+    --route: #e69f00;        /* Okabe-Ito orange (D9) - deliberately not blue */
+    --baseline: #444444;
+    --warn-bg: #fff6e0;
+    --warn-line: #e0a93b;
+    --warn-ink: #6b4a06;
+    --focus: #0b5fff;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    padding: 0 16px 48px;
+  }
+  .wrap { max-width: 1180px; margin: 0 auto; }
+  header { padding: 24px 0 8px; }
+  h1 { font-size: 26px; line-height: 1.2; margin: 0 0 4px; }
+  .sub { color: var(--ink-soft); margin: 0; }
+  :focus-visible {
+    outline: 3px solid var(--focus);
+    outline-offset: 2px;
+  }
+
+  #data-banner {
+    display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: baseline;
+    background: var(--warn-bg);
+    border: 1px solid var(--warn-line);
+    border-left-width: 6px;
+    color: var(--warn-ink);
+    border-radius: 8px;
+    padding: 10px 14px;
+    margin: 14px 0 0;
+    font-size: 14px;
+  }
+  #data-banner.real {
+    background: #e8f5ec; border-color: #3f8f5b; color: #1d4a2e;
+  }
+  #data-banner strong { font-weight: 700; }
+
+  .cols {
+    display: grid;
+    grid-template-columns: 300px minmax(0, 1fr) 320px;
+    gap: 18px;
+    margin-top: 18px;
+    align-items: start;
+  }
+  @media (max-width: 1080px) { .cols { grid-template-columns: 1fr; } }
+
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 14px;
+  }
+  .panel + .panel { margin-top: 14px; }
+  .panel h2 { font-size: 15px; margin: 0 0 10px; letter-spacing: .01em; }
+  .panel h3 { font-size: 13px; margin: 14px 0 6px; color: var(--ink-soft); text-transform: uppercase; letter-spacing: .06em; }
+
+  button {
+    font: inherit;
+    border: 1px solid #aeb5c0;
+    background: #fff;
+    color: var(--ink);
+    border-radius: 7px;
+    padding: 8px 11px;
+    cursor: pointer;
+  }
+  button:hover { background: #f0f2f6; }
+  button[aria-pressed="true"] { background: #15181d; color: #fff; border-color: #15181d; }
+  button.primary { background: #15181d; color: #fff; border-color: #15181d; font-weight: 600; }
+  button.primary:hover { background: #2a2f38; }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  .btn-row { display: flex; flex-wrap: wrap; gap: 8px; }
+  .btn-row > button { flex: 1 1 auto; }
+
+  .endpoints { margin: 0 0 12px; font-size: 14px; }
+  .endpoints div { display: flex; gap: 8px; padding: 3px 0; }
+  .endpoints .tag {
+    flex: 0 0 74px; font-weight: 600;
+  }
+  .endpoints .val { color: var(--ink-soft); font-variant-numeric: tabular-nums; }
+  .hint { color: var(--ink-soft); font-size: 13px; margin: 10px 0 0; }
+
+  svg.map { width: 100%; height: auto; display: block; background: #eceff3; border-radius: 10px; border: 1px solid var(--line); }
+  svg.map:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+  .road { stroke: #ffffff; stroke-width: 1.4; stroke-opacity: .85; }
+  .road.blocked { stroke: #8d8d8d; stroke-width: 1; stroke-dasharray: 2 3; stroke-opacity: .9; }
+  .tile { stroke: #ffffff; stroke-width: .5; fill-opacity: .9; }
+  .tile.avoided { stroke: var(--route); stroke-width: 2.4; stroke-dasharray: 5 3; }
+  .route-outline { fill: none; stroke: #000; stroke-width: 9; stroke-linejoin: round; stroke-linecap: round; }
+  .route-line { fill: none; stroke: var(--route); stroke-width: 6; stroke-linejoin: round; stroke-linecap: round; }
+  .baseline-line { fill: none; stroke: var(--baseline); stroke-width: 4; stroke-dasharray: 10 7; stroke-linecap: round; }
+  .cursor-ring { fill: none; stroke: var(--focus); stroke-width: 3; }
+
+  .legend { font-size: 13px; }
+  #legend-rows > div { display: flex; align-items: center; gap: 8px; padding: 2px 0; }
+  .legend i { width: 18px; height: 12px; border: 1px solid #fff; outline: 1px solid #c9ced6; flex: 0 0 auto; }
+  .legend .note { display: block; color: var(--ink-soft); font-size: 12px; margin-top: 8px; line-height: 1.45; }
+
+  #tile-readout { font-size: 13px; color: var(--ink-soft); min-height: 3.2em; margin: 10px 0 0; }
+  #tile-readout b { color: var(--ink); }
+
+  .card-head { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
+  .stat { font-size: 15px; }
+  .stat b { font-size: 22px; font-variant-numeric: tabular-nums; }
+  #result-body p { margin: 8px 0; }
+  #result-body ul { margin: 6px 0 10px; padding-left: 20px; }
+  #result-body li { margin: 3px 0; }
+  .nosafe { color: #8a1c1c; font-weight: 600; }
+  .cautions li { list-style: none; margin-left: -20px; }
+  .srcnote { font-size: 12px; color: var(--ink-soft); border-top: 1px solid var(--line); padding-top: 8px; margin-top: 10px; }
+
+  .story { margin-top: 26px; }
+  .story ol { margin: 0; padding-left: 0; list-style: none; counter-reset: step; }
+  .story li {
+    counter-increment: step;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 12px 14px 12px 54px;
+    position: relative;
+    margin-bottom: 10px;
+  }
+  .story li::before {
+    content: counter(step);
+    position: absolute; left: 14px; top: 12px;
+    width: 26px; height: 26px; border-radius: 50%;
+    background: #15181d; color: #fff;
+    display: grid; place-items: center;
+    font-size: 13px; font-weight: 700;
+  }
+  .story h3 { margin: 0 0 3px; font-size: 15px; }
+  .story p { margin: 0; color: var(--ink-soft); font-size: 14px; }
+  .story .flag { color: #8a1c1c; font-weight: 600; }
+
+  footer { margin-top: 28px; color: var(--ink-soft); font-size: 13px; }
+  .visually-hidden {
+    position: absolute; width: 1px; height: 1px; margin: -1px;
+    overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap;
+  }
+  @media print {
+    body { background: #fff; }
+    .no-print { display: none !important; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>Flood Safe Route</h1>
+  <p class="sub">A vision LLM reads post-Harvey aerial photos; the router keeps you out of the water. West Houston — Addicks &amp; Barker reservoirs.</p>
+  <p id="data-banner" role="status">
+    <span><strong>Sample scores.</strong> The flood percentages on this page are generated sample data, not Qwen3-VL output.
+    Click <em>Load real scores</em> and pick <code>results/flood_tiles.geojson</code> to show the real results.</span>
+  </p>
+</header>
+
+<div class="cols">
+
+  <!-- ------------------------------------------------ controls -->
+  <div class="no-print">
+    <div class="panel">
+      <h2>Plan a trip</h2>
+      <div class="endpoints">
+        <div><span class="tag">Start</span><span class="val" id="start-val">not set</span></div>
+        <div><span class="tag">Destination</span><span class="val" id="end-val">not set</span></div>
+      </div>
+      <div class="btn-row">
+        <button class="primary" id="btn-route">Find safe route</button>
+        <button id="btn-clear">Clear</button>
+      </div>
+      <p class="hint">Click the map to set the start, then click again for the destination.
+        With a keyboard: focus the map, move the cursor with the arrow keys, then use the two buttons below.</p>
+      <div class="btn-row">
+        <button id="btn-set-start">Set start at cursor</button>
+        <button id="btn-set-end">Set destination at cursor</button>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Demo presets</h2>
+      <div class="btn-row">
+        <button id="btn-showcase">Showcase route</button>
+        <button id="btn-nosafe">No safe route</button>
+      </div>
+      <p class="hint" id="preset-hint">The showcase route crosses tile <code>TXH_15362_27077</code>. The first pass scored it 0%;
+        the second pass scored it 95%. Turn the recheck off and the router drives straight through it.</p>
+      <h3>Scores</h3>
+      <div class="btn-row">
+        <button id="btn-recheck" aria-pressed="true">Recheck pass: on</button>
+      </div>
+      <h3>Layers</h3>
+      <div class="btn-row">
+        <button id="btn-baseline" aria-pressed="false" disabled>Show normal route</button>
+      </div>
+      <h3>Data</h3>
+      <div class="btn-row">
+        <label class="primary" for="file-input" style="border:1px solid #15181d;background:#15181d;color:#fff;border-radius:7px;padding:8px 11px;cursor:pointer;font-weight:600;flex:1 1 auto;text-align:center;">
+          Load real scores
+          <input type="file" id="file-input" accept=".geojson,.json,application/geo+json,application/json" class="visually-hidden">
+        </label>
+      </div>
+      <p class="hint" id="file-hint">Pick <code>results/flood_tiles.geojson</code> from ticket E1. Nothing is uploaded; the file is read in your browser.</p>
+    </div>
+
+    <div class="panel legend">
+      <h2>New floodwater, after &minus; before</h2>
+      <div id="legend-rows"></div>
+      <span class="note" id="legend-note"></span>
+    </div>
+  </div>
+
+  <!-- ------------------------------------------------ map -->
+  <div>
+    <div class="panel" style="padding:10px;">
+      <svg class="map" id="map" viewBox="0 0 820 820" tabindex="0" role="img"
+           aria-label="Flood map of west Houston. Blue rectangles are photographed tiles shaded by how much new floodwater the model estimated. White lines are the simulated street grid. Use the arrow keys to move the cursor."></svg>
+      <p id="tile-readout" aria-live="polite"></p>
+    </div>
+  </div>
+
+  <!-- ------------------------------------------------ result -->
+  <div>
+    <div class="panel">
+      <h2>Route</h2>
+      <div id="result-body">
+        <p class="hint" id="result-empty">Set a start and a destination, then press <em>Find safe route</em>.</p>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Why this route</h2>
+      <div id="explain-body" aria-live="polite">
+        <p class="hint">No route yet.</p>
+      </div>
+      <p class="srcnote" id="explain-src">On the live app this paragraph comes from Qwen3-VL on the GB10. Offline, this page
+        uses the same template the app falls back to when the model is slow or unreachable.</p>
+    </div>
+
+    <div class="panel">
+      <h2>What this map can get wrong</h2>
+      <ul style="margin:0;padding-left:20px;font-size:14px;color:var(--ink-soft);">
+        <li>Brown floodwater over fields can read as bare ground. Even after the recheck pass, 4 of 11 hand-checked tiles scored 0% were flooded.</li>
+        <li>Estimated percentages run about 19 points off the hand-graded value on average, so routing uses thresholds, not exact numbers.</li>
+        <li>Roads outside a photographed tile have no flood data at all. The route card says how much of your trip that is.</li>
+        <li>This is imagery from 2017, for a demo. Do not drive by it.</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<!-- ------------------------------------------------ story -->
+<section class="story" aria-labelledby="story-h">
+  <h2 id="story-h">How we built it</h2>
+  <ol>
+    <li><h3>Start with the imagery</h3><p>NOAA flew aerial photos of the Texas coast after Hurricane Harvey made landfall in August 2017. We paired each after photo with a before photo of the same ground, about 1.6 GB in all.</p></li>
+    <li><h3>Cut it into tiles</h3><p>575 tiles, each with its own bounds and center from the dataset's <code>image_metadata.csv</code>. 267 of them fall in the west Houston / Addicks&ndash;Barker area, which is the area this page routes on.</p></li>
+    <li><h3>Ask a vision model how much water it sees</h3><p>Qwen3-VL-8B-Instruct, served with vLLM on the Dell Pro Max GB10, estimated the share of each photo covered by water. New floodwater is the after percentage minus the before percentage, floored at zero.</p></li>
+    <li><h3>Grade it by hand</h3><p>We hand-labeled four sets of tiles as flooded or dry, and kept two of those sets held out so we were not tuning against our own answers.</p></li>
+    <li><h3>Find the failure</h3><p class="flag">Whole flooded tiles came back 0%. Muddy brown floodwater over fields and streets does not look like water to the model &mdash; it looks like bare ground.</p></li>
+    <li><h3>Fix it, part one: ask a yes/no question first</h3><p>For every tile scored 0%, we asked a separate question &mdash; is there floodwater in this photo, yes or no? 90 tiles went through that check.</p></li>
+    <li><h3>Fix it, part two: re-score the ones that said yes</h3><p>On a yes, we scored the after photo again with a note telling the model that muddy brown water is still water. 39 tiles came back with a new, higher score. Showing both photos at once was tried and dropped: the model read the camera's color change between flights as flooding.</p></li>
+    <li><h3>Check it against the held-out sets</h3><p>Flooded-versus-dry agreement on the held-out tiles rose from 83% to 91%. The percentages themselves are still loose, so we never present them as measurements.</p></li>
+    <li><h3>Route on it</h3><p>Every road segment takes the worst class of the tiles it touches. Above 50% new floodwater is impassable; 25&ndash;50%, and anything the model never scored, costs six times its length. The cheapest path wins, and we run a second, flood-blind search so the map can show you what was avoided.</p></li>
+  </ol>
+</section>
+
+<footer>
+  <p>Built for the UTSA &times; Dell GB10 Datathon, November 2026. Model: Qwen3-VL-8B-Instruct via vLLM on a Dell Pro Max GB10.
+  Routing rules on this page match the app's: block above 50%, caution 25&ndash;50% and unscored, caution cost &times;6, 40 km/h.
+  Streets here are a simulated grid, not OpenStreetMap, so distances differ from the app's.</p>
+</footer>
+
+</div>
+
+<script>
+"use strict";
+/* ============================================================ constants
+   These mirror the "Safe route" section of config.py. */
+const BBOX = { n: 29.8597, s: 29.7262, e: -95.5811, w: -95.7349 };
+const BLOCK_ABOVE_PCT   = 50;
+const CAUTION_PCT       = 25;
+const CAUTION_MULTIPLIER = 5;
+const AVG_SPEED_KMH     = 40;
+
+/* Sequential blue, same idea as flood_heatmap.FLOOD_BINS / FLOOD_COLORS.
+   TODO when config.py and flood_heatmap.py are pushed (decision D14): take these
+   straight from FLOOD_COLORS so the app, the Folium map and this page agree. */
+const FLOOD_BINS   = [10, 25, 50, 75];
+const FLOOD_COLORS = ["#eff3ff", "#c6dbef", "#9ecae1", "#4292c6", "#08519c"];
+const UNSCORED_COLOR = "#bdbdbd";
+const NOPHOTO_COLOR  = "#eceff3";
+
+const TILE_ROWS = 15, TILE_COLS = 18;
+const D_LAT = (BBOX.n - BBOX.s) / TILE_ROWS;
+const D_LON = (BBOX.e - BBOX.w) / TILE_COLS;
+const NODE_ROWS = TILE_ROWS * 2, NODE_COLS = TILE_COLS * 2;
+const N_D_LAT = D_LAT / 2, N_D_LON = D_LON / 2;
+
+const SHOWCASE = {
+  start: { lat: 29.8144, lon: -95.6233 },
+  end:   { lat: 29.8144, lon: -95.5993 }
+};
+const M_PER_DEG_LAT = 111320;
+const COS_LAT = Math.cos(29.79 * Math.PI / 180);
+
+/* ============================================================ helpers */
+function mulberry32(seed) {
+  return function () {
+    seed |= 0; seed = seed + 0x6D2B79F5 | 0;
+    let t = Math.imul(seed ^ seed >>> 15, 1 | seed);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+function metres(aLat, aLon, bLat, bLon) {
+  const dy = (aLat - bLat) * M_PER_DEG_LAT;
+  const dx = (aLon - bLon) * M_PER_DEG_LAT * COS_LAT;
+  return Math.hypot(dx, dy);
+}
+const miles = m => m / 1609.344;
+const fmtLatLon = p => p.lat.toFixed(4) + ", " + p.lon.toFixed(4);
+
+/* classify() is the rule from ticket 5.3 / decision D11, shared with the app's
+   tiles.classify(). null (never scored) is treated as caution, not clear. */
+function classify(pct) {
+  if (pct === null || pct === undefined || Number.isNaN(pct)) return "caution";
+  if (pct > BLOCK_ABOVE_PCT) return "blocked";
+  if (pct >= CAUTION_PCT) return "caution";
+  return "clear";
+}
+const CLASS_RANK = { blocked: 3, caution: 2, clear: 1, none: 0 };
+const worst = (a, b) => (CLASS_RANK[a] >= CLASS_RANK[b] ? a : b);
+
+function fillFor(pct) {
+  if (pct === null || pct === undefined || Number.isNaN(pct)) return UNSCORED_COLOR;
+  for (let i = 0; i < FLOOD_BINS.length; i++) if (pct < FLOOD_BINS[i]) return FLOOD_COLORS[i];
+  return FLOOD_COLORS[FLOOD_COLORS.length - 1];
+}
+
+/* ============================================================ sample tiles
+   Generated, NOT model output. Shape matches the FloodTile schema exactly, so a
+   real results/flood_tiles.geojson is a drop-in replacement (see loadGeoJSON). */
+function buildSampleTiles() {
+  const rnd = mulberry32(20170829);
+  /* Flooding concentrated on the reservoir pools and the bayou corridor. */
+  const centres = [
+    { lat: 29.8210, lon: -95.6450, peak: 96, scale: 0.0260 },  // Addicks pool
+    { lat: 29.7560, lon: -95.6560, peak: 94, scale: 0.0280 },  // Barker pool
+    { lat: 29.7650, lon: -95.6000, peak: 72, scale: 0.0180 },  // Buffalo Bayou
+    { lat: 29.8430, lon: -95.6900, peak: 66, scale: 0.0150 }   // Bear Creek
+  ];
+  function locality(lat, lon) {
+    if (lat > 29.832) return lon < -95.665 ? "Bear Creek" : "Jersey Village";
+    if (lat > 29.795) return lon < -95.660 ? "Addicks Reservoir" : "Eldridge";
+    if (lat > 29.762) return lon < -95.655 ? "Barker Reservoir" : "Buffalo Bayou";
+    return lon < -95.655 ? "Cinco Ranch" : "Briar Forest";
+  }
+
+  /* Explicit overrides, keyed "row,col".
+     - the recheck wall in column 14 is what the showcase route must detour around
+     - the corridor tiles either side of it must stay passable
+     - the pocket around (10,8) demonstrates "no safe route"           */
+  const WALL = [[4, 14], [5, 14], [6, 14], [7, 14]];
+  /* Never photographed, so the roads through it carry no flood data at all.
+     It sits right above the wall, which is where a detour wants to go - the
+     route card then has to admit how much of the trip is unphotographed. */
+  const GAPS = [[3, 14]];
+  const CORRIDOR_CLEAR = [[4, 12], [5, 12], [4, 13], [5, 13], [4, 15], [5, 15], [4, 16], [5, 16],
+                          [3, 12], [3, 13], [3, 15], [3, 16], [2, 13], [2, 14], [2, 15]];
+  const POCKET_WALL = [[9, 8], [11, 8], [10, 7], [10, 9]];
+  const POCKET_CLEAR = [[10, 8]];
+  /* Tiles ringing TXH_15362_27080 so it really is boxed in, per decision D15. */
+  const BOXED = [[6, 13], [7, 13], [6, 15], [7, 15]];
+
+  const inList = (list, r, c) => list.some(p => p[0] === r && p[1] === c);
+  const isSpecial = (r, c) => inList(WALL, r, c) || inList(GAPS, r, c) || inList(CORRIDOR_CLEAR, r, c) ||
+                              inList(POCKET_WALL, r, c) || inList(POCKET_CLEAR, r, c) || inList(BOXED, r, c);
+
+  const tiles = [];
+  let seq = 27200;   /* kept clear of the ids named below, so no two tiles share one */
+  for (let r = 0; r < TILE_ROWS; r++) {
+    for (let c = 0; c < TILE_COLS; c++) {
+      const north = BBOX.n - r * D_LAT, south = north - D_LAT;
+      const west  = BBOX.w + c * D_LON, east  = west + D_LON;
+      const lat = (north + south) / 2, lon = (west + east) / 2;
+      seq += 1;
+
+      /* ~7% of the area was never photographed: no tile at all, so roads there
+         have no flood data and count towards uncovered_m. */
+      const gap = rnd();
+      const special = isSpecial(r, c);
+      if (inList(GAPS, r, c)) continue;
+      if (!special && gap < 0.07) continue;
+
+      let field = 0;
+      for (const ce of centres) {
+        const d = Math.hypot(lat - ce.lat, (lon - ce.lon) * COS_LAT);
+        field = Math.max(field, ce.peak * Math.exp(-Math.pow(d / ce.scale, 2)));
+      }
+      field = Math.max(0, Math.min(100, field + (rnd() - 0.5) * 16));
+
+      let pct = Math.round(field);
+      let rechecked = false;
+
+      if (inList(WALL, r, c))            { pct = 88 + Math.round(rnd() * 7); rechecked = true; }
+      else if (inList(POCKET_WALL, r, c)) { pct = 76 + Math.round(rnd() * 10); }
+      else if (inList(BOXED, r, c))       { pct = 70 + Math.round(rnd() * 14); }
+      else if (inList(POCKET_CLEAR, r, c)) { pct = 4 + Math.round(rnd() * 8); }
+      else if (inList(CORRIDOR_CLEAR, r, c)) { pct = 5 + Math.round(rnd() * 14); }
+      else if (rnd() < 0.035)            { pct = null; }        /* photographed but never scored */
+
+      const before = pct === null ? null
+        : Math.round(Math.max(0, Math.min(28, 6 * Math.exp(-Math.pow(
+            Math.min(...centres.map(ce => Math.hypot(lat - ce.lat, (lon - ce.lon) * COS_LAT))) / 0.03, 2)) * 3 + rnd() * 4)));
+      const after = pct === null ? null : Math.min(100, before + pct);
+
+      tiles.push({
+        after_id: "TXH_15362_" + seq,
+        locality: locality(lat, lon),
+        new_flood_pct: pct,
+        before_water_pct: before,
+        after_water_pct: after,
+        rechecked: rechecked,
+        lat: +lat.toFixed(6), lon: +lon.toFixed(6),
+        north: north, south: south, east: east, west: west,
+        _row: r, _col: c
+      });
+    }
+  }
+
+  /* The recheck pass re-scored 39 tiles in all (story step 7). Four of them are
+     the wall; the rest are spread around, some landing in caution range and some
+     above the block threshold, so toggling the recheck visibly redraws the map. */
+  const rnd2 = mulberry32(39390);
+  const pool = tiles
+    .filter(t => !t.rechecked && t.new_flood_pct !== null && t.new_flood_pct < 18 && !isSpecial(t._row, t._col))
+    .sort((a, b) => (a.after_id < b.after_id ? -1 : 1));
+  for (let i = pool.length - 1; i > 0; i--) {
+    const j = Math.floor(rnd2() * (i + 1));
+    [pool[i], pool[j]] = [pool[j], pool[i]];
+  }
+  const need = 39 - tiles.filter(t => t.rechecked).length;
+  for (let k = 0; k < need && k < pool.length; k++) {
+    const t = pool[k];
+    t.rechecked = true;
+    t.new_flood_pct = rnd2() < 0.6 ? 55 + Math.round(rnd2() * 40) : 28 + Math.round(rnd2() * 20);
+    t.after_water_pct = Math.min(100, (t.before_water_pct || 0) + t.new_flood_pct);
+  }
+
+  /* The two tiles the pitch names (decision D15) get their real IDs. Both were
+     scored 0% by the first pass and 95% by the recheck. */
+  const name = (lat, lon, id) => {
+    const t = tiles.find(t => lat >= t.south && lat <= t.north && lon >= t.west && lon <= t.east);
+    if (t) { t.after_id = id; t.new_flood_pct = 95; t.after_water_pct = Math.min(100, (t.before_water_pct || 0) + 95); t.rechecked = true; }
+  };
+  name(29.8144, -95.6113, "TXH_15362_27077");
+  name(29.8000, -95.6110, "TXH_15362_27080");
+  return tiles;
+}
+
+/* ============================================================ state */
+let TILES = buildSampleTiles();
+let REAL_DATA = false;
+let recheckOn = true;
+let showBaseline = false;
+let start = null, end = null, result = null;
+let cursor = { i: 10, j: 26 };
+let clickTurn = 0;
+
+/* pct as displayed: with the recheck off, every rechecked tile falls back to the
+   0% the first pass gave it (only 0% tiles were ever rechecked). */
+const shownPct = t => (recheckOn ? t.new_flood_pct : (t.rechecked ? 0 : t.new_flood_pct));
+
+/* ============================================================ tile index */
+let tileGrid = new Map();
+function indexTiles() {
+  tileGrid = new Map();
+  for (const t of TILES) {
+    const r = Math.floor((BBOX.n - t.lat) / D_LAT), c = Math.floor((t.lon - BBOX.w) / D_LON);
+    const k = r + "," + c;
+    if (!tileGrid.has(k)) tileGrid.set(k, []);
+    tileGrid.get(k).push(t);
+  }
+}
+/* Every tile containing the point. Bounds are inclusive, so a point on a shared
+   edge is inside both tiles and takes the worse of the two (ticket 5.3). */
+function tilesAt(lat, lon) {
+  const rf = Math.floor((BBOX.n - lat) / D_LAT), cf = Math.floor((lon - BBOX.w) / D_LON);
+  const out = [];
+  for (let r = rf - 1; r <= rf + 1; r++) {
+    for (let c = cf - 1; c <= cf + 1; c++) {
+      const cell = tileGrid.get(r + "," + c);
+      if (!cell) continue;
+      for (const t of cell) {
+        if (lat >= t.south && lat <= t.north && lon >= t.west && lon <= t.east) out.push(t);
+      }
+    }
+  }
+  return out;
+}
+function classAt(lat, lon) {
+  const hits = tilesAt(lat, lon);
+  if (!hits.length) return { cls: "none", tile: null };
+  let cls = "clear", tile = null;
+  for (const t of hits) {
+    const c = classify(shownPct(t));
+    if (CLASS_RANK[c] > CLASS_RANK[cls] || tile === null) { if (CLASS_RANK[c] >= CLASS_RANK[cls]) { cls = c; tile = t; } }
+  }
+  return { cls, tile };
+}
+
+/* ============================================================ street grid
+   A simulated lattice. Nodes carry lat/lon and edges carry length in metres,
+   the same shape OSMnx gives the app, so the weighting below is the app's. */
+const nodes = [];
+const nodeId = (i, j) => i * NODE_COLS + j;
+for (let i = 0; i < NODE_ROWS; i++) {
+  for (let j = 0; j < NODE_COLS; j++) {
+    /* Offset by half a step so junctions sit inside tiles rather than on their
+       shared edges, which keeps "which tile blocked this road" unambiguous. */
+    nodes.push({ id: nodeId(i, j), i, j,
+                 lat: BBOX.n - (i + 0.5) * N_D_LAT, lon: BBOX.w + (j + 0.5) * N_D_LON });
+  }
+}
+/* Drop a deterministic 8% of links so the grid is not a perfect lattice. */
+const rawEdges = [];
+(function () {
+  const rnd = mulberry32(7717);
+  for (let i = 0; i < NODE_ROWS; i++) {
+    for (let j = 0; j < NODE_COLS; j++) {
+      const a = nodes[nodeId(i, j)];
+      if (j + 1 < NODE_COLS && rnd() > 0.08) rawEdges.push([a, nodes[nodeId(i, j + 1)]]);
+      if (i + 1 < NODE_ROWS && rnd() > 0.08) rawEdges.push([a, nodes[nodeId(i + 1, j)]]);
+    }
+  }
+})();
+
+let edges = [], adj = [];
+/* Ticket 5.3: an edge takes the worst class of the tiles containing either end
+   node or its midpoint; blocked edges come out of the graph, caution edges cost
+   length x (1 + CAUTION_MULTIPLIER). */
+function applyFloodWeights() {
+  edges = []; adj = nodes.map(() => []);
+  for (const [a, b] of rawEdges) {
+    const mid = { lat: (a.lat + b.lat) / 2, lon: (a.lon + b.lon) / 2 };
+    let cls = "none", tile = null;
+    for (const p of [a, b, mid]) {
+      const got = classAt(p.lat, p.lon);
+      if (CLASS_RANK[got.cls] > CLASS_RANK[cls]) { cls = got.cls; tile = got.tile; }
+      else if (got.cls === cls && tile === null) tile = got.tile;
+    }
+    const length = metres(a.lat, a.lon, b.lat, b.lon);
+    const cost = cls === "caution" ? length * (1 + CAUTION_MULTIPLIER) : length;
+    const e = { a: a.id, b: b.id, length, cls, cost, tile, blocked: cls === "blocked" };
+    edges.push(e);
+    if (!e.blocked) { adj[a.id].push(e); adj[b.id].push(e); }
+  }
+}
+
+function nearestNode(pt) {
+  let best = null, bestD = Infinity;
+  for (const n of nodes) {
+    const d = metres(pt.lat, pt.lon, n.lat, n.lon);
+    if (d < bestD) { bestD = d; best = n; }
+  }
+  return best;
+}
+
+/* Dijkstra. `weight` picks the attribute; `useBlocked` includes blocked edges,
+   which is how the flood-blind baseline is computed. */
+function dijkstra(fromId, toId, weight, useBlocked) {
+  const dist = new Float64Array(nodes.length).fill(Infinity);
+  const prev = new Int32Array(nodes.length).fill(-1);
+  const prevEdge = new Array(nodes.length).fill(null);
+  const done = new Uint8Array(nodes.length);
+  dist[fromId] = 0;
+  for (;;) {
+    let u = -1, best = Infinity;
+    for (let i = 0; i < nodes.length; i++) if (!done[i] && dist[i] < best) { best = dist[i]; u = i; }
+    if (u === -1 || u === toId) break;
+    done[u] = 1;
+    const list = useBlocked ? allEdgesAt(u) : adj[u];
+    for (const e of list) {
+      const v = e.a === u ? e.b : e.a;
+      if (done[v]) continue;
+      const nd = dist[u] + e[weight];
+      if (nd < dist[v]) { dist[v] = nd; prev[v] = u; prevEdge[v] = e; }
+    }
+  }
+  if (!Number.isFinite(dist[toId])) return null;
+  const path = [], pathEdges = [];
+  for (let v = toId; v !== -1; v = prev[v]) {
+    path.push(v);
+    if (prevEdge[v]) pathEdges.push(prevEdge[v]);
+    if (v === fromId) break;
+  }
+  path.reverse(); pathEdges.reverse();
+  return { path, edges: pathEdges, total: dist[toId] };
+}
+let allEdgeIndex = null;
+function allEdgesAt(u) {
+  if (!allEdgeIndex) {
+    allEdgeIndex = nodes.map(() => []);
+    for (const e of edges) { allEdgeIndex[e.a].push(e); allEdgeIndex[e.b].push(e); }
+  }
+  return allEdgeIndex[u];
+}
+
+/* ============================================================ routing
+   Produces the RouteResult shape from the ticket contracts. */
+function computeRoute() {
+  const sN = nearestNode(start), eN = nearestNode(end);
+  const tileProps = t => ({ after_id: t.after_id, locality: t.locality, new_flood_pct: shownPct(t), lat: t.lat, lon: t.lon });
+
+  if (sN.id === eN.id) {
+    return { status: "ok", coords: [[sN.lon, sN.lat]], distance_m: 0, duration_s: 0,
+             baseline: null, flooded_tiles_avoided: [], caution_tiles: [], uncovered_m: 0 };
+  }
+
+  /* A point sitting in a flooded tile has no passable road at all, which is a
+     different problem from being unable to get there. Say which. */
+  const sCls = classAt(sN.lat, sN.lon).cls, eCls = classAt(eN.lat, eN.lon).cls;
+  if (sCls === "blocked" || eCls === "blocked") {
+    const who = sCls === "blocked" && eCls === "blocked" ? "Both the start and the destination are"
+              : sCls === "blocked" ? "The start is" : "The destination is";
+    return { status: "no_safe_route",
+             reason: who + " inside a tile rated above " + BLOCK_ABOVE_PCT +
+                     "% new floodwater, so no road there is passable.", baselineCoords: null };
+  }
+
+  const safe = dijkstra(sN.id, eN.id, "cost", false);
+  const base = dijkstra(sN.id, eN.id, "length", true);
+
+  if (!safe) {
+    return { status: "no_safe_route",
+             reason: "All paths cross roads in tiles rated above " + BLOCK_ABOVE_PCT + "% new floodwater.",
+             baselineCoords: base ? base.path.map(id => [nodes[id].lon, nodes[id].lat]) : null };
+  }
+
+  let distance = 0, uncovered = 0;
+  const caution = new Map();
+  const safeTiles = new Set();
+  for (const e of safe.edges) {
+    distance += e.length;
+    if (e.cls === "none") uncovered += e.length;
+    if (e.cls === "caution" && e.tile) caution.set(e.tile.after_id, tileProps(e.tile));
+    if (e.tile) safeTiles.add(e.tile.after_id);
+  }
+
+  let baseDistance = 0;
+  const avoided = new Map();
+  if (base) {
+    for (const e of base.edges) {
+      baseDistance += e.length;
+      if (e.cls === "blocked" && e.tile && !safeTiles.has(e.tile.after_id)) avoided.set(e.tile.after_id, tileProps(e.tile));
+    }
+  }
+
+  const samePath = base && base.path.length === safe.path.length &&
+                   base.path.every((v, k) => v === safe.path[k]);
+
+  return {
+    status: "ok",
+    coords: safe.path.map(id => [nodes[id].lon, nodes[id].lat]),
+    distance_m: distance,
+    duration_s: Math.round(distance / 1000 / AVG_SPEED_KMH * 3600),
+    baseline: (base && !samePath) ? { coords: base.path.map(id => [nodes[id].lon, nodes[id].lat]), distance_m: baseDistance } : null,
+    flooded_tiles_avoided: [...avoided.values()],
+    caution_tiles: [...caution.values()],
+    uncovered_m: uncovered
+  };
+}
+
+/* ============================================================ drawing */
+const SVG_W = 820, SVG_H = 820;
+const svg = document.getElementById("map");
+const px = (lat, lon) => [
+  (lon - BBOX.w) / (BBOX.e - BBOX.w) * SVG_W,
+  (BBOX.n - lat) / (BBOX.n - BBOX.s) * SVG_H
+];
+const svgEl = (name, attrs) => {
+  const el = document.createElementNS("http://www.w3.org/2000/svg", name);
+  for (const k in attrs) el.setAttribute(k, attrs[k]);
+  return el;
+};
+
+function draw() {
+  svg.textContent = "";
+  const gTiles = svgEl("g", {}), gRoads = svgEl("g", {}), gRoute = svgEl("g", {}), gMarks = svgEl("g", {});
+
+  const avoidedIds = new Set((result && result.flooded_tiles_avoided || []).map(t => t.after_id));
+
+  for (const t of TILES) {
+    const [x1, y1] = px(t.north, t.west), [x2, y2] = px(t.south, t.east);
+    const pct = shownPct(t);
+    const rect = svgEl("rect", {
+      x: x1, y: y1, width: Math.max(0, x2 - x1), height: Math.max(0, y2 - y1),
+      fill: fillFor(pct), class: "tile" + (avoidedIds.has(t.after_id) ? " avoided" : "")
+    });
+    rect.addEventListener("mousemove", () => readout(t));
+    gTiles.appendChild(rect);
+    if (avoidedIds.has(t.after_id)) gTiles.appendChild(rect);  /* keep outline on top */
+  }
+
+  for (const e of edges) {
+    const a = nodes[e.a], b = nodes[e.b];
+    const [x1, y1] = px(a.lat, a.lon), [x2, y2] = px(b.lat, b.lon);
+    gRoads.appendChild(svgEl("line", { x1, y1, x2, y2, class: "road" + (e.blocked ? " blocked" : "") }));
+  }
+
+  if (result && result.status === "ok" && result.coords.length > 1) {
+    const pts = result.coords.map(([lon, lat]) => px(lat, lon).join(",")).join(" ");
+    if (showBaseline && result.baseline) {
+      gRoute.appendChild(svgEl("polyline", { points: result.baseline.coords.map(([lon, lat]) => px(lat, lon).join(",")).join(" "), class: "baseline-line" }));
+    }
+    gRoute.appendChild(svgEl("polyline", { points: pts, class: "route-outline" }));
+    gRoute.appendChild(svgEl("polyline", { points: pts, class: "route-line" }));
+  } else if (result && result.status === "no_safe_route" && showBaseline && result.baselineCoords) {
+    gRoute.appendChild(svgEl("polyline", { points: result.baselineCoords.map(([lon, lat]) => px(lat, lon).join(",")).join(" "), class: "baseline-line" }));
+  }
+
+  const marker = (pt, label, fill) => {
+    const [x, y] = px(pt.lat, pt.lon);
+    gMarks.appendChild(svgEl("circle", { cx: x, cy: y, r: 9, fill: fill, stroke: "#fff", "stroke-width": 3 }));
+    const txt = svgEl("text", { x: x, y: y + 4.5, "text-anchor": "middle", "font-size": 11, "font-weight": "700", fill: "#fff" });
+    txt.textContent = label;
+    gMarks.appendChild(txt);
+  };
+  if (start) marker(start, "A", "#1a7f37");
+  if (end) marker(end, "B", "#8a1c1c");
+
+  const cn = nodes[nodeId(cursor.i, cursor.j)];
+  if (cn) {
+    const [cx, cy] = px(cn.lat, cn.lon);
+    gMarks.appendChild(svgEl("circle", { cx, cy, r: 7, class: "cursor-ring" }));
+  }
+
+  svg.append(gTiles, gRoads, gRoute, gMarks);
+}
+
+function readout(t) {
+  const el = document.getElementById("tile-readout");
+  if (!t) { el.textContent = ""; return; }
+  const pct = shownPct(t);
+  const cls = classify(pct);
+  const label = { blocked: "impassable", caution: "caution", clear: "passable" }[cls];
+  const pctTxt = pct === null ? "Not scored" : pct + "% new floodwater";
+  const water = (t.before_water_pct === null || t.before_water_pct === undefined)
+    ? "" : " · water " + t.before_water_pct + "% → " + t.after_water_pct + "%";
+  el.innerHTML = "<b>" + t.locality + "</b> · " + t.after_id + "<br>" + pctTxt + water +
+    " · <b>" + label + "</b>" + (t.rechecked && recheckOn ? "<br>Rechecked by a second AI pass." : "");
+}
+
+/* ============================================================ result card */
+function renderResult() {
+  const body = document.getElementById("result-body");
+  const explain = document.getElementById("explain-body");
+  const btnBase = document.getElementById("btn-baseline");
+
+  if (!result) {
+    body.innerHTML = '<p class="hint">Set a start and a destination, then press <em>Find safe route</em>.</p>';
+    explain.innerHTML = '<p class="hint">No route yet.</p>';
+    btnBase.disabled = true; btnBase.setAttribute("aria-pressed", "false");
+    return;
+  }
+
+  if (result.status === "no_safe_route") {
+    body.innerHTML = '<p class="nosafe">No safe route found. Every path crosses a heavily flooded area.</p>' +
+      '<p class="hint">' + result.reason + '</p>';
+    explain.innerHTML = "<p>Every road out of there runs through tiles the model rated above " + BLOCK_ABOVE_PCT +
+      "% new floodwater, so there is nothing to recommend. Wait, or ask for help getting out.</p>";
+    btnBase.disabled = !result.baselineCoords;
+    return;
+  }
+
+  const mi = miles(result.distance_m), mins = Math.round(result.duration_s / 60);
+  const av = result.flooded_tiles_avoided, ca = result.caution_tiles;
+  const locs = [...new Set(av.map(t => t.locality))];
+
+  let html = '<p class="card-head"><span class="stat"><b>' + mi.toFixed(1) + '</b> mi</span>' +
+             '<span class="stat"><b>' + mins + '</b> min</span></p>';
+  if (av.length) {
+    html += "<p><strong>Avoided " + av.length + " heavily flooded area" + (av.length === 1 ? "" : "s") +
+            "</strong>" + (locs.length ? " — " + locs.join(", ") : "") + ".</p><ul>";
+    for (const t of av) html += "<li>" + t.locality + " — " + t.new_flood_pct + "% (" + t.after_id + ")</li>";
+    html += "</ul>";
+  } else {
+    html += "<p>No heavily flooded areas on the direct route, so this is the normal shortest path.</p>";
+  }
+  if (result.baseline) {
+    const extra = miles(result.baseline.distance_m);
+    html += "<p>The direct route is " + extra.toFixed(1) + " mi. This one adds " +
+            (mi - extra).toFixed(1) + " mi to stay out of the water.</p>";
+  }
+
+  const cautions = buildCautions(result);
+  html += '<ul class="cautions">';
+  for (const c of cautions) html += "<li>⚠ " + c + "</li>";
+  html += "</ul>";
+  body.innerHTML = html;
+
+  /* Ticket 6.1 fallback template. The live app asks the model for this. */
+  let text;
+  if (av.length) {
+    text = "This route avoids " + av.length + " heavily flooded area" + (av.length === 1 ? "" : "s") +
+           (locs.length ? " (" + locs.join(", ") + ")" : "") +
+           (result.baseline ? " and adds " + (mi - miles(result.baseline.distance_m)).toFixed(1) + " mi compared with the direct route." : ".");
+  } else {
+    text = "Nothing on the direct route was rated above " + BLOCK_ABOVE_PCT +
+           "% new floodwater, so this is the shortest path, " + mi.toFixed(1) + " mi and about " + mins + " minutes.";
+  }
+  explain.innerHTML = "<p>" + text + "</p>";
+
+  btnBase.disabled = !result.baseline;
+  if (!result.baseline) { showBaseline = false; btnBase.setAttribute("aria-pressed", "false"); btnBase.textContent = "Show normal route"; }
+}
+
+/* Ticket 6.2: built in code, never by the model, so they are always accurate. */
+function buildCautions(res) {
+  const out = [];
+  for (const t of res.caution_tiles || []) {
+    out.push(t.new_flood_pct === null || t.new_flood_pct === undefined
+      ? "No flood score for an area near " + t.locality + "."
+      : "Moderate flooding estimated (" + t.new_flood_pct + "% of the area) near " + t.locality + ".");
+  }
+  if (res.uncovered_m > 0) out.push(miles(res.uncovered_m).toFixed(1) + " mi of this route has no flood photos.");
+  out.push("AI estimates can miss floodwater that looks like bare ground.");
+  return out;
+}
+
+/* ============================================================ legend */
+function renderLegend() {
+  const rows = [];
+  const bounds = [0, ...FLOOD_BINS, 100];
+  for (let i = 0; i < FLOOD_COLORS.length; i++) {
+    const lo = bounds[i], hi = bounds[i + 1];
+    const tag = i >= 3 ? " — impassable" : (i === 2 ? " — caution" : "");
+    rows.push('<div><i style="background:' + FLOOD_COLORS[i] + '"></i><span>' + lo + "–" + hi + "%" + tag + "</span></div>");
+  }
+  rows.push('<div><i style="background:' + UNSCORED_COLOR + '"></i><span>Not scored — caution</span></div>');
+  rows.push('<div><i style="background:' + NOPHOTO_COLOR + '"></i><span>No photo coverage — no data</span></div>');
+  document.getElementById("legend-rows").innerHTML = rows.join("");
+  const scored = TILES.filter(t => t.new_flood_pct !== null && t.new_flood_pct !== undefined).length;
+  const rech = TILES.filter(t => t.rechecked).length;
+  document.getElementById("legend-note").innerHTML =
+    (REAL_DATA ? "Real exported scores. " : "Sample scores. ") + TILES.length + " tiles in view, " + scored +
+    " scored, " + rech + " rechecked.<br>Estimated by Qwen3-VL. Tiles shown as 0% can still be flooded (4 of 11 hand checks).";
+}
+
+/* ============================================================ wiring */
+function rebuild() {
+  indexTiles();
+  allEdgeIndex = null;
+  applyFloodWeights();
+  if (start && end) result = computeRoute();
+  renderLegend(); renderResult(); draw();
+}
+
+function setEndpoint(pt, which) {
+  const inside = pt.lat <= BBOX.n && pt.lat >= BBOX.s && pt.lon >= BBOX.w && pt.lon <= BBOX.e;
+  if (!inside) {
+    document.getElementById("tile-readout").textContent = "Routing covers the west Houston area only.";
+    return;
+  }
+  if (which === "start") { start = pt; } else { end = pt; }
+  document.getElementById("start-val").textContent = start ? fmtLatLon(start) : "not set";
+  document.getElementById("end-val").textContent = end ? fmtLatLon(end) : "not set";
+  result = null; renderResult(); draw();
+}
+
+svg.addEventListener("click", ev => {
+  const r = svg.getBoundingClientRect();
+  const x = (ev.clientX - r.left) / r.width * SVG_W, y = (ev.clientY - r.top) / r.height * SVG_H;
+  const lon = BBOX.w + x / SVG_W * (BBOX.e - BBOX.w);
+  const lat = BBOX.n - y / SVG_H * (BBOX.n - BBOX.s);
+  setEndpoint({ lat, lon }, clickTurn++ % 2 === 0 ? "start" : "end");
+});
+
+svg.addEventListener("keydown", ev => {
+  const step = { ArrowUp: [-1, 0], ArrowDown: [1, 0], ArrowLeft: [0, -1], ArrowRight: [0, 1] }[ev.key];
+  if (!step) return;
+  ev.preventDefault();
+  cursor.i = Math.max(0, Math.min(NODE_ROWS - 1, cursor.i + step[0]));
+  cursor.j = Math.max(0, Math.min(NODE_COLS - 1, cursor.j + step[1]));
+  const n = nodes[nodeId(cursor.i, cursor.j)];
+  const hit = tilesAt(n.lat, n.lon);
+  readout(hit.length ? hit[0] : null);
+  if (!hit.length) document.getElementById("tile-readout").textContent =
+    fmtLatLon(n) + " — no photo coverage here, so no flood data.";
+  draw();
+});
+
+const cursorPoint = () => {
+  const n = nodes[nodeId(cursor.i, cursor.j)];
+  return { lat: n.lat, lon: n.lon };
+};
+document.getElementById("btn-set-start").addEventListener("click", () => setEndpoint(cursorPoint(), "start"));
+document.getElementById("btn-set-end").addEventListener("click", () => setEndpoint(cursorPoint(), "end"));
+
+document.getElementById("btn-route").addEventListener("click", () => {
+  if (!start || !end) {
+    document.getElementById("tile-readout").textContent = "Enter a start and destination.";
+    return;
+  }
+  result = computeRoute();
+  renderResult(); draw();
+});
+
+document.getElementById("btn-clear").addEventListener("click", () => {
+  start = end = result = null; clickTurn = 0; showBaseline = false;
+  document.getElementById("start-val").textContent = "not set";
+  document.getElementById("end-val").textContent = "not set";
+  document.getElementById("btn-baseline").setAttribute("aria-pressed", "false");
+  document.getElementById("btn-baseline").textContent = "Show normal route";
+  renderResult(); draw();
+});
+
+document.getElementById("btn-recheck").addEventListener("click", ev => {
+  recheckOn = !recheckOn;
+  ev.currentTarget.setAttribute("aria-pressed", String(recheckOn));
+  ev.currentTarget.textContent = "Recheck pass: " + (recheckOn ? "on" : "off");
+  rebuild();
+});
+
+document.getElementById("btn-baseline").addEventListener("click", ev => {
+  showBaseline = !showBaseline;
+  ev.currentTarget.setAttribute("aria-pressed", String(showBaseline));
+  ev.currentTarget.textContent = showBaseline ? "Hide normal route" : "Show normal route";
+  draw();
+});
+
+document.getElementById("btn-showcase").addEventListener("click", () => {
+  start = { ...SHOWCASE.start }; end = { ...SHOWCASE.end }; clickTurn = 0;
+  document.getElementById("start-val").textContent = fmtLatLon(start);
+  document.getElementById("end-val").textContent = fmtLatLon(end);
+  result = computeRoute();
+  showBaseline = true;
+  const b = document.getElementById("btn-baseline");
+  b.setAttribute("aria-pressed", "true"); b.textContent = "Hide normal route";
+  renderResult(); draw();
+});
+
+document.getElementById("btn-nosafe").addEventListener("click", () => {
+  const pocket = TILES.find(t => t._row === 10 && t._col === 8);
+  start = { ...SHOWCASE.start };
+  end = pocket ? { lat: pocket.lat, lon: pocket.lon } : { lat: 29.766, lon: -95.662 };
+  clickTurn = 0;
+  document.getElementById("start-val").textContent = fmtLatLon(start);
+  document.getElementById("end-val").textContent = fmtLatLon(end);
+  result = computeRoute();
+  renderResult(); draw();
+});
+
+/* ---------------------------------------------------------- real data */
+document.getElementById("file-input").addEventListener("change", ev => {
+  const file = ev.target.files && ev.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    try { loadGeoJSON(JSON.parse(reader.result), file.name); }
+    catch (err) { fileError("That file is not valid JSON."); }
+  };
+  reader.onerror = () => fileError("The file could not be read.");
+  reader.readAsText(file);
+});
+function fileError(msg) {
+  const h = document.getElementById("file-hint");
+  h.textContent = msg + " Expected the FeatureCollection that ticket E1 writes to results/flood_tiles.geojson.";
+  h.style.color = "#8a1c1c";
+}
+
+/* Reads results/flood_tiles.geojson (the FloodTile schema) and keeps only the
+   tiles inside ROAD_BBOX, which is what this grid routes on. */
+function loadGeoJSON(gj, filename) {
+  if (!gj || gj.type !== "FeatureCollection" || !Array.isArray(gj.features)) {
+    return fileError("That file has no FeatureCollection.");
+  }
+  const out = [];
+  for (const f of gj.features) {
+    const p = f && f.properties, g = f && f.geometry;
+    if (!p || !g || g.type !== "Polygon" || !g.coordinates || !g.coordinates[0]) continue;
+    const ring = g.coordinates[0];
+    const lons = ring.map(c => c[0]), lats = ring.map(c => c[1]);
+    const north = Math.max(...lats), south = Math.min(...lats);
+    const east = Math.max(...lons), west = Math.min(...lons);
+    const lat = p.lat !== undefined && p.lat !== null ? p.lat : (north + south) / 2;
+    const lon = p.lon !== undefined && p.lon !== null ? p.lon : (east + west) / 2;
+    if (lat > BBOX.n || lat < BBOX.s || lon < BBOX.w || lon > BBOX.e) continue;  /* other clusters */
+    const pct = (p.new_flood_pct === null || p.new_flood_pct === undefined) ? null : Number(p.new_flood_pct);
+    out.push({
+      after_id: p.after_id || "tile", locality: p.locality || "Unknown",
+      new_flood_pct: pct === null || Number.isNaN(pct) ? null : pct,
+      before_water_pct: p.before_water_pct ?? null,
+      after_water_pct: p.after_water_pct ?? null,
+      rechecked: !!p.rechecked,
+      lat, lon, north, south, east, west,
+      _row: Math.floor((BBOX.n - lat) / D_LAT), _col: Math.floor((lon - BBOX.w) / D_LON)
+    });
+  }
+  if (!out.length) return fileError("No tiles in that file fall inside the west Houston routing area.");
+
+  TILES = out; REAL_DATA = true;
+  const banner = document.getElementById("data-banner");
+  banner.className = "real";
+  banner.innerHTML = "<span><strong>Showing real exported scores</strong> — " + out.length +
+    " tiles inside the west Houston routing area, read from <code>" + filename +
+    "</code>. Streets are still a simulated grid, so distances differ from the app's.</span>";
+  const h = document.getElementById("file-hint");
+  h.textContent = "Loaded " + out.length + " tiles. Pick another file to replace them.";
+  h.style.color = "";
+  result = null; start = start; end = end;
+  rebuild();
+}
+
+/* ============================================================ go */
+rebuild();
+</script>
+</body>
+</html>
