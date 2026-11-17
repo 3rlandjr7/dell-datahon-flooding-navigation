@@ -1,23 +1,24 @@
 # Demo run-sheet — Flood Safe Route
 
-Target: 4:30 PM. Everything below runs from `docs/route_demo.html` with no server,
-no GB10 and no internet. Rehearse it once.
+Everything below runs from `docs/index.html`. No GB10, and no internet except for
+the basemap imagery. Rehearse it once.
 
 ## Before you start (1 minute)
 
-The page opens with sample scores. Switch it to the real ones: click
-**Load real scores** and pick `results/flood_tiles.geojson`, which is committed
-in this repo — 575 tiles, final scores, recheck included. The amber banner turns
-green and the map redraws from Qwen's actual output.
-
-Do this before anyone is watching, and check the banner is green. If you skip it,
-**demo anyway**: the banner tells the truth about the numbers either way.
-
-Open the page and leave it open:
+Serve the repo and the page loads the real scores by itself:
 
 ```bash
-xdg-open docs/route_demo.html
+python3 -m http.server 8000     # then open http://localhost:8000/docs/
 ```
+
+Check the top banner reads **Real flood scores** in green before anyone is
+watching. Opening `docs/index.html` straight off disk works too, but then you
+have to click **Load flood scores** and pick `results/flood_tiles.geojson`
+yourself. Either way the banner tells the truth about the numbers.
+
+If you have run `scripts/fetch_roads.py`, the second banner turns green too and
+the router is on real streets. If not, it says the streets are simulated —
+which is the honest answer to give if anyone asks.
 
 ## The demo (about 3 minutes)
 
@@ -67,11 +68,12 @@ network is down."*
 
 | Problem | Do this |
 |---|---|
-| Page won't open | `cd` into the repo first — `xdg-open docs/route_demo.html` from home fails |
+| Page won't open | `cd` into the repo first — `xdg-open docs/index.html` from home fails |
+| Basemap is blank | No internet. Everything else still works; say the basemap is the only thing that needs the network |
 | Route doesn't appear | Press **Clear**, then **Showcase route** |
 | Recheck toggle doesn't move the route | The hint under the presets says so outright when no rechecked tile changes a route in the loaded scores. Skip step 4 and talk through step 5 instead. |
 | Judge asks if the numbers are real | Say yes if the banner is green, no if it's amber. Don't hedge. |
-| Judge asks about the streets | Be straight: the grid is simulated so the page runs offline. The flood data and routing rules are real. |
+| Judge asks about the streets | Read the second banner. Green means real OpenStreetMap streets; amber means a simulated grid, and say so plainly. |
 | Judge asks about the live app | *"The routing rules on this page are the app's; it reads the same export and real OpenStreetMap roads."* |
 | Asked why not Google Maps | *"It has no idea which roads are flooded. Nobody is driving these streets to report it."* |
 

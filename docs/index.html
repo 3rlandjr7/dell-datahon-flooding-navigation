@@ -1,0 +1,320 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Flood Safe Route</title>
+<!--
+  Flood Safe Route - routing around AI-estimated flooding, on a real map.
+
+  Open this file by double-clicking it. No server and no build step. Leaflet is
+  vendored in docs/vendor/leaflet, so the page works with no internet; what it
+  loses offline is the basemap imagery, not the flood data or the routing.
+
+  DATA
+  ----
+  Flood scores: the page ships with generated SAMPLE scores and says so in a
+  banner. Click "Load flood scores" and pick results/flood_tiles.geojson for the
+  real Qwen3-VL output.
+
+  Streets: by default the router runs on an evenly spaced SIMULATED grid, which
+  is honest but is not the street layout under the basemap. Run
+  scripts/fetch_roads.py once on a machine with internet to produce
+  results/road_network.geojson, then "Load street network" to route on the real
+  streets of west Houston.
+
+  The routing rules are the project's own (see README): block above 50% new
+  floodwater, caution 25-50% and unscored, caution costs six times its length,
+  an edge takes the worst class of the tiles touching its ends or its midpoint.
+-->
+<link rel="stylesheet" href="vendor/leaflet/leaflet.css">
+<style>
+  :root {
+    --bg: #f7f8fa;
+    --panel: #ffffff;
+    --ink: #15181d;
+    --ink-soft: #4a5260;
+    --line: #d6dae1;
+    --route: #e69f00;        /* Okabe-Ito orange - deliberately not blue */
+    --baseline: #444444;
+    --warn-bg: #fff6e0; --warn-line: #e0a93b; --warn-ink: #6b4a06;
+    --ok-bg: #e8f5ec; --ok-line: #3f8f5b; --ok-ink: #1d4a2e;
+    --focus: #0b5fff;
+    --btn-line: #aeb5c0; --btn-bg: #fff; --btn-hover: #f0f2f6;
+    --accent-bg: #15181d; --accent-ink: #fff; --accent-hover: #2a2f38;
+    --danger: #8a1c1c;
+  }
+  /* Dark mode dims the page furniture and swaps the basemap for Esri's dark
+     canvas. The flood ramp itself never changes: it is sequential blue built
+     for a light background, and recolouring it would change what it means. */
+  :root[data-theme="dark"] {
+    --bg: #11141a; --panel: #1b1f27; --ink: #eef1f6; --ink-soft: #a9b2c0;
+    --line: #2d3340;
+    --warn-bg: #3a2f12; --warn-line: #a67c20; --warn-ink: #f5e3b6;
+    --ok-bg: #16331f; --ok-line: #3f8f5b; --ok-ink: #bfe6cb;
+    --focus: #6ea8ff;
+    --btn-line: #39414f; --btn-bg: #232834; --btn-hover: #2c3341;
+    --accent-bg: #e9eef7; --accent-ink: #12151a; --accent-hover: #cfd8e6;
+    --danger: #ff9b9b;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--bg); color: var(--ink);
+    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    padding: 0 16px 48px;
+  }
+  .wrap { max-width: 1240px; margin: 0 auto; }
+  header { padding: 24px 0 8px; }
+  h1 { font-size: 30px; line-height: 1.2; margin: 0 0 4px; }
+  .sub { color: var(--ink-soft); margin: 0; }
+  .topbar { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; }
+  :focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+
+  .banner {
+    display: block; border: 1px solid var(--warn-line); border-left-width: 6px;
+    background: var(--warn-bg); color: var(--warn-ink);
+    border-radius: 8px; padding: 10px 14px; margin: 14px 0 0; font-size: 14px;
+  }
+  .banner.real { background: var(--ok-bg); border-color: var(--ok-line); color: var(--ok-ink); }
+
+  .cols { display: grid; grid-template-columns: 270px minmax(0, 1fr) 310px; gap: 18px; margin-top: 16px; align-items: start; }
+  @media (max-width: 1100px) { .cols { grid-template-columns: 1fr; } }
+
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px; }
+  .panel + .panel { margin-top: 14px; }
+  .panel h2 { font-size: 15px; margin: 0 0 10px; }
+  .panel h3 { font-size: 13px; margin: 14px 0 6px; color: var(--ink-soft); text-transform: uppercase; letter-spacing: .06em; }
+
+  button {
+    font: inherit; border: 1px solid var(--btn-line); background: var(--btn-bg);
+    color: var(--ink); border-radius: 7px; padding: 8px 11px; cursor: pointer;
+  }
+  button:hover { background: var(--btn-hover); }
+  button[aria-pressed="true"] { background: var(--accent-bg); color: var(--accent-ink); border-color: var(--accent-bg); }
+  button.primary { background: var(--accent-bg); color: var(--accent-ink); border-color: var(--accent-bg); font-weight: 600; }
+  button.primary:hover { background: var(--accent-hover); }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  .btn-row { display: flex; flex-wrap: wrap; gap: 8px; }
+  .btn-row > button { flex: 1 1 auto; }
+  .file-label {
+    border: 1px solid var(--btn-line); background: var(--btn-bg); color: var(--ink);
+    border-radius: 7px; padding: 8px 11px; cursor: pointer; font: inherit;
+    flex: 1 1 auto; text-align: center;
+  }
+  .file-label:hover { background: var(--btn-hover); }
+  .visually-hidden { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+  .endpoints { margin: 0 0 12px; font-size: 14px; }
+  .endpoints div { display: flex; gap: 8px; padding: 3px 0; }
+  .endpoints .tag { flex: 0 0 74px; font-weight: 600; }
+  .endpoints .val { color: var(--ink-soft); font-variant-numeric: tabular-nums; }
+  .hint { color: var(--ink-soft); font-size: 13px; margin: 10px 0 0; }
+  .hint code, #result-body code { overflow-wrap: anywhere; }
+
+  /* --- map --- */
+  #map-wrap { position: relative; }
+  #map {
+    height: 640px; border-radius: 10px; border: 1px solid var(--line);
+    background: #e8ebef; z-index: 0;
+  }
+  @media (max-width: 1100px) { #map { height: 460px; } }
+  /* Crosshair at the map centre: the keyboard route to setting a point. Leaflet
+     already pans with the arrow keys, so "centre" is something a keyboard user
+     can actually aim. */
+  #crosshair {
+    position: absolute; left: 50%; top: 50%; width: 34px; height: 34px;
+    margin: -17px 0 0 -17px; pointer-events: none; z-index: 500; opacity: .85;
+  }
+  #crosshair::before, #crosshair::after {
+    content: ""; position: absolute; background: var(--focus);
+    box-shadow: 0 0 0 1px rgba(255,255,255,.9);
+  }
+  #crosshair::before { left: 50%; top: 0; width: 2px; height: 34px; margin-left: -1px; }
+  #crosshair::after { top: 50%; left: 0; height: 2px; width: 34px; margin-top: -1px; }
+  .leaflet-container { font: inherit; }
+  .marker-pin {
+    display: grid; place-items: center; width: 26px; height: 26px; border-radius: 50%;
+    color: #fff; font-weight: 700; font-size: 13px; border: 3px solid #fff;
+    box-shadow: 0 1px 4px rgba(0,0,0,.4);
+  }
+
+  .legend { font-size: 13px; }
+  #legend-rows { display: flex; flex-wrap: wrap; gap: 2px 20px; }
+  #legend-rows > div { display: flex; align-items: center; gap: 8px; padding: 2px 0; }
+  .legend i { width: 18px; height: 12px; border: 1px solid #fff; outline: 1px solid var(--line); flex: 0 0 auto; }
+  .legend .note { display: block; color: var(--ink-soft); font-size: 12px; margin-top: 8px; line-height: 1.45; }
+
+  .card-head { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
+  .stat { font-size: 15px; color: var(--ink-soft); }
+  .stat b { font-size: 28px; font-variant-numeric: tabular-nums; color: var(--ink); }
+  #result-body p { margin: 8px 0; }
+  #result-body ul { margin: 6px 0 10px; padding-left: 20px; }
+  #result-body li { margin: 3px 0; overflow-wrap: anywhere; }
+  .nosafe { color: var(--danger); font-weight: 600; }
+  .cautions li { list-style: none; margin-left: -20px; }
+  .srcnote { font-size: 12px; color: var(--ink-soft); border-top: 1px solid var(--line); padding-top: 8px; margin-top: 10px; }
+
+  .story { margin-top: 26px; }
+  .story ol { margin: 0; padding-left: 0; list-style: none; counter-reset: step; }
+  .story li {
+    counter-increment: step; background: var(--panel); border: 1px solid var(--line);
+    border-radius: 10px; padding: 12px 14px 12px 54px; position: relative; margin-bottom: 10px;
+  }
+  .story li::before {
+    content: counter(step); position: absolute; left: 14px; top: 12px;
+    width: 26px; height: 26px; border-radius: 50%;
+    background: var(--accent-bg); color: var(--accent-ink);
+    display: grid; place-items: center; font-size: 13px; font-weight: 700;
+  }
+  .story h3 { margin: 0 0 3px; font-size: 15px; }
+  .story p { margin: 0; color: var(--ink-soft); font-size: 14px; }
+  .story .flag { color: var(--danger); font-weight: 600; }
+  footer { margin-top: 28px; color: var(--ink-soft); font-size: 13px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <div class="topbar">
+    <div>
+      <h1>Flood Safe Route</h1>
+      <p class="sub">A vision model reads post-Harvey aerial photos; the router keeps you out of the water. West Houston — Addicks &amp; Barker reservoirs.</p>
+    </div>
+    <button id="btn-theme" aria-pressed="false">Dark mode</button>
+  </div>
+  <p id="data-banner" class="banner" role="status"></p>
+  <p id="road-banner" class="banner" role="status"></p>
+</header>
+
+<div class="cols">
+  <div>
+    <div class="panel">
+      <h2>Plan a trip</h2>
+      <div class="endpoints">
+        <div><span class="tag">Start</span><span class="val" id="start-val">not set</span></div>
+        <div><span class="tag">Destination</span><span class="val" id="end-val">not set</span></div>
+      </div>
+      <div class="btn-row">
+        <button class="primary" id="btn-route">Find safe route</button>
+        <button id="btn-clear">Clear</button>
+      </div>
+      <p class="hint">Click the map to set the start, then click again for the destination.
+        With a keyboard: focus the map, pan with the arrow keys to put the crosshair where you want,
+        then use the buttons below.</p>
+      <div class="btn-row">
+        <button id="btn-set-start">Set start at crosshair</button>
+        <button id="btn-set-end">Set destination at crosshair</button>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Demo presets</h2>
+      <div class="btn-row">
+        <button id="btn-showcase">Showcase route</button>
+        <button id="btn-nosafe">No safe route</button>
+      </div>
+      <p class="hint" id="preset-hint">The showcase finds the trip the recheck pass changes most in
+        whatever scores are loaded: one the router sends straight through a tile while the first pass's
+        0% stands, and around once the second pass has rescored it.</p>
+      <h3>Scores</h3>
+      <div class="btn-row">
+        <button id="btn-recheck" aria-pressed="true">Recheck pass: on</button>
+      </div>
+      <h3>Layers</h3>
+      <div class="btn-row">
+        <button id="btn-baseline" aria-pressed="false" disabled>Show normal route</button>
+      </div>
+      <h3>Data</h3>
+      <div class="btn-row">
+        <label class="file-label" for="file-tiles">Load flood scores
+          <input type="file" id="file-tiles" accept=".geojson,.json,application/geo+json,application/json" class="visually-hidden">
+        </label>
+      </div>
+      <div class="btn-row" style="margin-top:8px;">
+        <label class="file-label" for="file-roads">Load street network
+          <input type="file" id="file-roads" accept=".geojson,.json,application/geo+json,application/json" class="visually-hidden">
+        </label>
+      </div>
+      <p class="hint" id="file-hint">Nothing is uploaded; files are read in your browser.
+        Flood scores: <code>results/flood_tiles.geojson</code>. Streets:
+        <code>results/road_network.geojson</code> from <code>scripts/fetch_roads.py</code>.</p>
+    </div>
+  </div>
+
+  <div>
+    <div class="panel" style="padding:10px;">
+      <div id="map-wrap">
+        <div id="map"></div>
+        <div id="crosshair" aria-hidden="true"></div>
+      </div>
+      <p class="hint" id="map-note"></p>
+    </div>
+    <div class="panel legend">
+      <h2>New floodwater, after &minus; before</h2>
+      <div id="legend-rows"></div>
+      <span class="note" id="legend-note"></span>
+    </div>
+  </div>
+
+  <div>
+    <div class="panel">
+      <h2>Route</h2>
+      <div id="result-body"><p class="hint">Set a start and a destination, then press <em>Find safe route</em>.</p></div>
+    </div>
+    <div class="panel">
+      <h2>Why this route</h2>
+      <div id="explain-body" aria-live="polite"><p class="hint">No route yet.</p></div>
+      <p class="srcnote">On the full app this paragraph comes from Qwen3-VL on the GB10. This page uses
+        the same template the app falls back to when the model is slow or unreachable.</p>
+    </div>
+    <div class="panel">
+      <h2>What this map can get wrong</h2>
+      <ul style="margin:0;padding-left:20px;font-size:14px;color:var(--ink-soft);">
+        <li>Brown floodwater over fields can read as bare ground. Even after the recheck pass, 4 of 11 hand-checked tiles scored 0% were flooded.</li>
+        <li>Estimated percentages run about 19 points off the hand-graded value on average, so routing uses thresholds, not exact numbers.</li>
+        <li>Roads outside a photographed tile have no flood data at all. The route card says how much of your trip that is.</li>
+        <li>This is imagery from 2017, for a portfolio demo. Do not drive by it.</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<section class="story" aria-labelledby="story-h">
+  <h2 id="story-h">How we built it</h2>
+  <ol>
+    <li><h3>Start with the imagery</h3><p>NOAA flew aerial photos of the Texas coast after Hurricane Harvey made landfall in August 2017. We paired each after photo with a before photo of the same ground, about 1.6 GB in all.</p></li>
+    <li><h3>Cut it into tiles</h3><p>575 tiles, each with its own bounds and center from the dataset's <code>image_metadata.csv</code>. 267 of them fall in the west Houston / Addicks&ndash;Barker area, which is the area this page routes on.</p></li>
+    <li><h3>Ask a vision model how much water it sees</h3><p>Qwen3-VL-8B-Instruct, served with vLLM on a Dell Pro Max GB10, estimated the share of each photo covered by water. New floodwater is the after percentage minus the before percentage, floored at zero.</p></li>
+    <li><h3>Grade it by hand</h3><p>We hand-labeled four sets of tiles as flooded or dry, and kept two of those sets held out so we were not tuning against our own answers.</p></li>
+    <li><h3>Find the failure</h3><p class="flag">Whole flooded tiles came back 0%. Muddy brown floodwater over fields and streets does not look like water to the model &mdash; it looks like bare ground.</p></li>
+    <li><h3>Fix it, part one: ask a yes/no question first</h3><p>For every tile scored 0%, we asked a separate question &mdash; is there floodwater in this photo, yes or no? 90 tiles went through that check.</p></li>
+    <li><h3>Fix it, part two: re-score the ones that said yes</h3><p>On a yes, we scored the after photo again with a note telling the model that muddy brown water is still water. 39 tiles came back with a new, higher score. Showing both photos at once was tried and dropped: the model read the camera's color change between flights as flooding.</p></li>
+    <li><h3>Check it against the held-out sets</h3><p>Flooded-versus-dry agreement on the held-out tiles rose from 83% to 91%. The percentages themselves are still loose, so we never present them as measurements.</p></li>
+    <li><h3>Route on it</h3><p>Every road segment takes the worst class of the tiles it touches. Above 50% new floodwater is impassable; 25&ndash;50%, and anything the model never scored, costs six times its length. The cheapest path wins, and we run a second, flood-blind search so the map can show you what was avoided.</p></li>
+  </ol>
+</section>
+
+<footer>
+  <p>Flood estimates by Qwen3-VL-8B-Instruct via vLLM on a Dell Pro Max GB10. Imagery: NOAA National Geodetic
+  Survey and USDA NAIP, via the UTSA flood images dataset. Map library: Leaflet (BSD-2), vendored in
+  <code>docs/vendor/leaflet</code>. Basemaps by Esri, loaded only when online.</p>
+</footer>
+
+</div>
+
+<script src="vendor/leaflet/leaflet.js"></script>
+<script>
+/* Theme chosen before the body paints, so the page never flashes the wrong one. */
+(function () {
+  var saved = null;
+  try { saved = localStorage.getItem("fsr-theme"); } catch (e) { /* blocked storage */ }
+  var dark = saved ? saved === "dark"
+    : (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches);
+  document.documentElement.setAttribute("data-theme", dark ? "dark" : "light");
+})();
+</script>
+<script src="app.js"></script>
+</body>
+</html>

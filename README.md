@@ -21,20 +21,30 @@ for the interactive map (hover for numbers, switch to satellite). Shown here: 55
 
 ## Try the routing demo
 
-No install, no server, no internet, no GB10 — open the page:
+A Leaflet map with the flood estimate laid over it, routing in the browser. Serve the
+repo and open it, and it loads the real scores by itself:
 
 ```sh
-xdg-open docs/route_demo.html      # macOS: open · Windows: start
+python3 -m http.server 8000      # then open http://localhost:8000/docs/
 ```
+
+Or just double-click [`docs/index.html`](docs/index.html) — it works with no server and
+no internet, because Leaflet is vendored in `docs/vendor/leaflet`. Opened that way it
+starts on **sample** scores and says so in a banner; click **Load flood scores** and pick
+[`results/flood_tiles.geojson`](results/flood_tiles.geojson) for the real ones. What you
+lose offline is the basemap imagery, not the data or the routing.
 
 Click **Showcase route** to watch a route bend around a flooded area, then toggle
 **Recheck pass** off to see the route pass 1 alone would have sent you on — straight
-through a tile the model first scored 0%.
+through a tile the model first scored 0%. The button searches whatever scores are loaded
+for the trip that difference changes most, so it keeps working if the scores are redone.
 
-The page opens with **sample** scores and says so in a banner. To see the real ones,
-click **Load real scores** and pick [`results/flood_tiles.geojson`](results/flood_tiles.geojson),
-which is committed here: 575 tiles, final scores, recheck included. The banner turns
-green and the map redraws.
+**Real streets.** The router starts on an evenly spaced simulated grid, which is not the
+street layout under the basemap, and the page says so. Replace it once:
+
+```sh
+python3 scripts/fetch_roads.py   # OpenStreetMap, needs internet, no API key
+```
 
 [`docs/DEMO_SCRIPT.md`](docs/DEMO_SCRIPT.md) is a three-minute walkthrough for presenting it.
 
@@ -222,10 +232,13 @@ experiments/                  prompt comparison script and its cached answers
 labels/                       hand labels (set_A to set_D)
 results/                      water_scores.csv, recheck_scores.csv, flood_map.html/.png,
                               flood_tiles.geojson (tile bounds + final scores, for the map)
-docs/route_demo.html          the routing demo page, standalone
+docs/index.html               the routing map; open it directly or serve the repo
+docs/app.js                   flood weighting, routing and the map, all client side
+docs/vendor/leaflet/          Leaflet 1.9.4, vendored so the page needs no CDN
 docs/DEMO_SCRIPT.md           how to present it
 scripts/export_tiles.py       flood table -> results/flood_tiles.geojson (needs data/)
 scripts/tiles_from_map_html.py  same output from flood_map.html, when data/ is absent
+scripts/fetch_roads.py        OpenStreetMap -> results/road_network.geojson
 data/                         the dataset, downloaded here (not committed)
 ```
 
@@ -247,11 +260,13 @@ Rescoring with a new prompt just means running the export again.
   marked "no" with 28% flood; it is counted as "no".
 - **Photo differences.** Before and after photos come from different cameras a year
   apart; colour, haze and cloud shadow can mislead both people and the model.
-- **The demo routes on a simulated street grid, not real streets.** A Flask app reading
-  OpenStreetMap roads was planned and scoped out; the demo page uses an evenly spaced
-  grid so it runs with no server and no network. The flood data and the routing rules
-  are real, so a route shows which *areas* it avoids and why, but its distances and
-  turns are not navigation. Don't drive by it — the imagery is from 2017 regardless.
+- **Routing quality depends on which street network is loaded.** Until
+  `scripts/fetch_roads.py` has been run the router uses an evenly spaced simulated grid,
+  not the streets under the basemap, and the page says so in a banner. With the real
+  OpenStreetMap network loaded the geometry is real, but it is still untimed,
+  undirected and ignores one-way restrictions, so a route shows which *areas* to avoid
+  and why — it is not turn-by-turn navigation. Don't drive by it; the imagery is from
+  2017 regardless.
 
 ## Data and credits
 

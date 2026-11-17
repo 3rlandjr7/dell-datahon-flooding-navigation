@@ -9,7 +9,7 @@ not config.py / flood_heatmap.py are in place yet.
 
 It looks for the usual files under results/ and data/, applies the recheck pass
 (decision D13), and writes results/flood_tiles.geojson. Then open
-docs/route_demo.html, click "Load real scores" and pick that file.
+docs/index.html, click "Load flood scores" and pick that file.
 
 If your files live elsewhere, point at them:
 
@@ -225,7 +225,7 @@ def main() -> None:
     blocked = int((pd.to_numeric(table["new_flood_pct"], errors="coerce") > 50).sum())
     print(f"\nWrote {count} tiles to {args.out}  ({size_kb:.0f} KB)")
     print(f"  {scored} scored, {rechecked} rechecked, {blocked} above the 50% block threshold")
-    print("\nNow open docs/route_demo.html, click 'Load real scores' and pick that file.")
+    print("\nNow open docs/index.html, click 'Load flood scores' and pick that file.")
 
 
 if __name__ == "__main__":
