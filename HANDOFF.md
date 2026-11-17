@@ -116,9 +116,15 @@ ticket 6.1 fallback template instead of asking the model.
   the page loads.
 - D14 is still open: the pipeline's `config.py` and `README.md` predate the
   recheck, and `flood_map.html` shows pre-recheck scores.
-- The page's colour bins are my own 6-bin blue scale with a `TODO` to reconcile
-  with `flood_heatmap.FLOOD_COLORS` once that file exists, so the app, the Folium
-  map and this page agree.
+- **Colour reconciliation is already done** (step 5 of the merge plan). The page
+  now carries `flood_heatmap.py`'s `FLOOD_COLORS`
+  (`#6da7ec #3987e5 #256abf #184f95 #0d366b`) and `UNSCORED_COLOR` (`#bdbdb9`),
+  verified across every bin in both themes. Don't redo it.
+  One trap if it ever changes: `flood_heatmap.FLOOD_BINS` is the six bin EDGES
+  `[0,10,25,50,75,100]`, while the page's `FLOOD_BINS` is the four interior
+  thresholds `[10,25,50,75]`. Same boundaries, different representation. Pasting
+  the edges in breaks `fillFor()` and the legend - convert with
+  `EDGES.slice(1, -1)`. `NOPHOTO_COLOR` is page-only and is not part of the ramp.
 
 ## 5. Merge questions worth answering
 

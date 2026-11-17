@@ -371,12 +371,20 @@ const CAUTION_PCT       = 25;
 const CAUTION_MULTIPLIER = 5;
 const AVG_SPEED_KMH     = 40;
 
-/* Sequential blue, same idea as flood_heatmap.FLOOD_BINS / FLOOD_COLORS.
-   TODO when config.py and flood_heatmap.py are pushed (decision D14): take these
-   straight from FLOOD_COLORS so the app, the Folium map and this page agree. */
+/* Colours mirror flood_heatmap.py, so this page, the Folium map and the app all
+   shade a tile the same way. Copy FLOOD_COLORS and UNSCORED_COLOR verbatim when
+   they change there.
+
+   Careful: flood_heatmap.FLOOD_BINS is the six bin EDGES [0,10,25,50,75,100].
+   FLOOD_BINS here is the four interior thresholds between them - the same
+   boundaries, one representation apart. Pasting the edges in breaks fillFor()
+   and the legend, so convert instead: FLOOD_BINS = EDGES.slice(1, -1). */
 const FLOOD_BINS   = [10, 25, 50, 75];
-const FLOOD_COLORS = ["#eff3ff", "#c6dbef", "#9ecae1", "#4292c6", "#08519c"];
-const UNSCORED_COLOR = "#bdbdbd";
+const FLOOD_COLORS = ["#6da7ec", "#3987e5", "#256abf", "#184f95", "#0d366b"];
+const UNSCORED_COLOR = "#bdbdb9";
+/* Page-only, with no counterpart in flood_heatmap.py: areas no photo covers at
+   all. It matches the map plate so they read as empty rather than as a score,
+   and it is NOT part of the FLOOD_COLORS ramp. */
 const NOPHOTO_COLOR  = "#eceff3";
 
 const TILE_ROWS = 15, TILE_COLS = 18;
