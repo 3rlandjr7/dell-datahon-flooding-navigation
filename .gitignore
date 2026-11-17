@@ -1,0 +1,21 @@
+# Dataset: downloaded by download_dataset() into data/ (see README)
+data/
+
+# Hand-label pictures: regenerate with labeling.make_labeling_sets()
+labels/*/images/
+
+# Python and Jupyter
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+.venv/
+venv/
+
+# Editors and OS
+.DS_Store
+*~
+.~lock.*#
+
+# Cached road graph for the routing app (ticket 5.2)
+road_graph.graphml
+*.graphml
