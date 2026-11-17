@@ -769,6 +769,53 @@ function computeRoute() {
   };
 }
 
+/* ============================================================ showcase
+   The showcase exists to find a trip the recheck pass changes: one the router
+   sends straight through a tile while pass 1's 0% stands, and around once the
+   second pass has rescored it. Which trip that is depends entirely on the
+   scores loaded, so search for it rather than hard-coding a pair that suits
+   only one dataset. Falls back to the D15 coordinates. */
+let showcaseCache = null;
+
+function inBox(p) {
+  return p.lat <= BBOX.n && p.lat >= BBOX.s && p.lon >= BBOX.w && p.lon <= BBOX.e;
+}
+
+function findShowcase() {
+  if (showcaseCache) return showcaseCache;
+  let best = { start: { ...SHOWCASE.start }, end: { ...SHOWCASE.end }, tile: null, gain: 0 };
+  const cands = TILES
+    .filter(t => t.rechecked && classify(t.new_flood_pct) === "blocked")
+    .sort((a, b) => (b.new_flood_pct || 0) - (a.new_flood_pct || 0))
+    .slice(0, 14);
+  const saved = recheckOn;
+  search:
+  for (const t of cands) {
+    const h = t.north - t.south, w = t.east - t.west;
+    for (const k of [1.0, 1.6, 2.4]) {
+      for (const axis of ["ew", "ns"]) {
+        const a = axis === "ew" ? { lat: t.lat, lon: t.west - w * k }
+                                : { lat: t.north + h * k, lon: t.lon };
+        const c = axis === "ew" ? { lat: t.lat, lon: t.east + w * k }
+                                : { lat: t.south - h * k, lon: t.lon };
+        if (!inBox(a) || !inBox(c)) continue;
+        start = a; end = c;
+        recheckOn = true;  reweight(); const on  = computeRoute();
+        recheckOn = false; reweight(); const off = computeRoute();
+        if (on.status !== "ok" || off.status !== "ok") continue;
+        if (!(on.flooded_tiles_avoided || []).some(x => x.after_id === t.after_id)) continue;
+        const gain = on.distance_m - off.distance_m;
+        if (gain > best.gain) best = { start: a, end: c, tile: t, gain };
+        if (best.gain > 2400) break search;   /* ~1.5 mi is plenty to see */
+      }
+    }
+  }
+  recheckOn = saved;
+  reweight();
+  showcaseCache = best;
+  return best;
+}
+
 /* ============================================================ drawing */
 const SVG_W = 820, SVG_H = 820;
 const svg = document.getElementById("map");
@@ -967,10 +1014,14 @@ function renderLegend() {
 }
 
 /* ============================================================ wiring */
-function rebuild() {
+function reweight() {
   indexTiles();
   allEdgeIndex = null;
   applyFloodWeights();
+}
+
+function rebuild() {
+  reweight();
   if (start && end) result = computeRoute();
   renderLegend(); renderResult(); draw();
 }
@@ -1057,8 +1108,22 @@ document.getElementById("btn-zoom").addEventListener("click", ev => {
   draw();
 });
 
-document.getElementById("btn-showcase").addEventListener("click", () => {
-  start = { ...SHOWCASE.start }; end = { ...SHOWCASE.end }; clickTurn = 0;
+document.getElementById("btn-showcase").addEventListener("click", ev => {
+  const btn = ev.currentTarget;
+  btn.disabled = true;
+  const pick = findShowcase();
+  btn.disabled = false;
+  const hint = document.getElementById("preset-hint");
+  if (pick.tile) {
+    hint.innerHTML = "The showcase route crosses tile <code>" + pick.tile.after_id +
+      "</code>. The first pass scored it 0%; the recheck scored it " +
+      pick.tile.new_flood_pct + "%. Turn the recheck off and the router drives " +
+      "straight through it.";
+  } else {
+    hint.textContent = "No rechecked tile in this data changes a route, so the " +
+      "recheck toggle will not move this one. Everything else still works.";
+  }
+  start = { ...pick.start }; end = { ...pick.end }; clickTurn = 0;
   document.getElementById("start-val").textContent = fmtLatLon(start);
   document.getElementById("end-val").textContent = fmtLatLon(end);
   result = computeRoute();
@@ -1127,7 +1192,7 @@ function loadGeoJSON(gj, filename) {
   }
   if (!out.length) return fileError("No tiles in that file fall inside the west Houston routing area.");
 
-  TILES = out; REAL_DATA = true;
+  TILES = out; REAL_DATA = true; showcaseCache = null;
   const banner = document.getElementById("data-banner");
   banner.className = "real";
   banner.innerHTML = "<span><strong>Showing real exported scores</strong> — " + out.length +

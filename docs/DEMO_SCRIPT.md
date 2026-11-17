@@ -30,17 +30,24 @@ running on the Dell GB10 estimated how much of each tile is under water."*
 
 **3. The route.** Click **Showcase route**.
 Expect: an orange route bending around a dark tile, with the dashed gray direct
-route going straight through it. Read the card out loud: distance, time,
-*"Avoided 1 heavily flooded area — Eldridge, 95%."*
+route going straight through it. Read the card out loud — distance, time, and the
+*"Avoided N heavily flooded areas"* line with the locality and percentage.
+
+The button picks the trip that best shows the recheck off in whatever scores are
+loaded, so the exact distances and tile differ between the sample and the real
+data. Click it once beforehand and note the numbers you'll be saying.
 
 **4. The failure, and the fix — this is the moment.** Click **Recheck pass: on**
 to turn it **off**.
-The route snaps back to the short line straight through the tile.
+The route snaps back to the short line straight through the tile. On the real
+scores that's about a mile instead of six and a half.
 *"That's what our first pass would have told you to drive through. The model
 scored this tile 0% — muddy brown floodwater over a field doesn't look like
 water to it. So we added a second pass: ask yes/no 'is there water here' on
 every 0% tile, then re-score the ones that say yes. That tile went from 0% to
 95%. Held-out agreement went from 83% to 91%."*
+The tile it names is printed under the preset buttons, so you can read the id
+and its percentage straight off the page.
 Click it back **on**. The route bends around again.
 
 **5. Honesty.** Point at the caution lines on the card: *"It still tells you how
@@ -62,6 +69,7 @@ network is down."*
 |---|---|
 | Page won't open | `cd` into the repo first — `xdg-open docs/route_demo.html` from home fails |
 | Route doesn't appear | Press **Clear**, then **Showcase route** |
+| Recheck toggle doesn't move the route | The hint under the presets says so outright when no rechecked tile changes a route in the loaded scores. Skip step 4 and talk through step 5 instead. |
 | Judge asks if the numbers are real | Say yes if the banner is green, no if it's amber. Don't hedge. |
 | Judge asks about the streets | Be straight: the grid is simulated so the page runs offline. The flood data and routing rules are real. |
 | Judge asks about the live app | *"The routing rules on this page are the app's; it reads the same export and real OpenStreetMap roads."* |
