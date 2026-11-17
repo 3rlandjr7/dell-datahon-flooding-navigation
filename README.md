@@ -51,6 +51,64 @@ python3 scripts/fetch_roads.py   # OpenStreetMap, needs internet, no API key
 
 [`docs/DEMO_SCRIPT.md`](docs/DEMO_SCRIPT.md) is a three-minute walkthrough for presenting it.
 
+## Inside the router
+
+Every road segment takes the worst flood class of the tiles touching either end or
+its midpoint:
+
+| Class | Tile score | Cost |
+|---|---|---|
+| Blocked | above 50% new floodwater | removed from the graph |
+| Caution | 25–50%, **or photographed but never scored** | length × 6 |
+| Clear | under 25% | length |
+| No data | outside every tile | length, reported separately |
+
+50% is the block line because every hand-graded tile the model put above it was also
+judged flooded (30 of 30, below). Unscored counts as caution because uncertainty should
+not read as safety. Dijkstra finds the cheapest path; a second, flood-blind search over
+raw length runs alongside it so the map can show which flooded areas were avoided.
+
+### What the router actually does
+
+Sampling 40 random routes and measuring which classes of road they use:
+
+| Class | Share of network | Share of routed distance | Ratio |
+|---|---:|---:|---:|
+| No flood data | 56.6% | **83.3%** | 1.47× |
+| Clear | 7.1% | 9.3% | 1.31× |
+| Caution | 13.5% | 7.4% | **0.55×** |
+
+**The router prefers roads nobody photographed over roads the model assessed as
+moderate risk.** That falls straight out of the cost table: unassessed costs 1×,
+caution costs 6×, so the cheapest path is the least-informed one. It is avoiding
+information rather than flooding.
+
+Behind it is an inconsistency worth naming: a tile that was photographed but never
+scored is penalised as caution, while a place that was never photographed is not
+penalised at all — the same state of knowledge, opposite costs. Measured on the
+simulated grid, so it needs re-running once the real street network is loaded; real
+streets cluster where people live, and NOAA photographed where damage was, so the
+numbers may move. Fixing it is the first item under *Where it's going next*.
+
+### Interface decisions
+
+- **Leaflet is vendored** into `docs/vendor/leaflet`, not loaded from a CDN, so the page
+  opens by double-clicking the file with no internet. Offline it loses the basemap
+  imagery, not the data or the routing.
+- **The map plate stays light in dark mode.** The flood ramp is a sequential blue built
+  for a light background; on a dark one its darkest step — the worst flooding — sinks
+  out of sight, inverting what the shading means.
+- **Colours come from `flood_heatmap.FLOOD_COLORS` verbatim**, so the Folium map and the
+  router shade a tile identically.
+- **Caution warnings are assembled in code, never written by the model**, so they are
+  always accurate, and they group by locality rather than repeating a sentence per tile.
+- **Banners state which flood scores and which street network are loaded** and turn green
+  only when both are real.
+- **Keyboard throughout:** pan with the arrow keys and set points from the crosshair; the
+  hundreds of map tiles are deliberately kept out of the tab order; the map carries an
+  accessible name; contrast clears WCAG AA in both themes.
+- Anything read from a loaded file is HTML-escaped before it is displayed.
+
 ## How it works
 
 1. **Data.** 575 pairs of aerial photos from the
@@ -260,6 +318,25 @@ lives outside `docs/`. The root [`index.html`](index.html) forwards the bare URL
 
 Served that way the page fetches the flood scores and, if you have generated it, the
 street network, so a visitor sees the real thing without touching the file pickers.
+
+## Where it's going next
+
+1. **Real street network.** Routing runs on an evenly spaced simulated grid until
+   `scripts/fetch_roads.py` has been run, and the page says so in a banner. Replacing it
+   is a single command.
+2. **Surfacing uncertainty in the interface.** Re-measure the bias above on real streets,
+   then add a control that weights unassessed roads explicitly, so the trade-off between
+   "shortest" and "best evidenced" is something a user can see and move, rather than a
+   constant buried in the cost table.
+3. **Routing realism.** The graph is undirected and assumes a flat 40 km/h, so it ignores
+   one-way restrictions and road classes. `fetch_roads.py` already captures the `oneway`
+   and `highway` tags; nothing uses them yet.
+4. **Automated tests.** The routing core — classification, edge weighting, the shortest
+   path, uncovered distance — is pure and easy to test. Verification so far has been
+   manual, which is the largest quality gap in the repository.
+5. **One export path.** `results/flood_tiles.geojson` is currently recovered by parsing
+   the rendered Folium map, because the 1.6 GB dataset was not to hand. `export_tiles()`
+   belongs in `flood_heatmap.py`, fed by `flood_table()` directly.
 
 ## Limitations
 
