@@ -21,8 +21,11 @@ for the interactive map (hover for numbers, switch to satellite). Shown here: 55
 
 ## Try the routing demo
 
-A Leaflet map with the flood estimate laid over it, routing in the browser. Serve the
-repo and open it, and it loads the real scores by itself:
+**[Open the live map](https://3rlandjr7.github.io/dell-datahon-flooding-navigation/)**
+— a Leaflet map with the flood estimate laid over it, routing in your browser. It loads
+the real scores by itself.
+
+To run it from a clone instead:
 
 ```sh
 python3 -m http.server 8000      # then open http://localhost:8000/docs/
@@ -223,6 +226,7 @@ each was tested in the prompt.
 ## Project layout
 
 ```
+index.html                    sends the published site's bare URL to the map
 config.py                     all settings: model server, paths, prompts, label sets
 flood_heatmap.py              download, load pairs, score and recheck with Qwen, table, map
 labeling.py                   make blind label sheets; compare labels with Qwen
@@ -245,6 +249,17 @@ data/                         the dataset, downloaded here (not committed)
 `flood_tiles.geojson` is the one file the two halves share. The scoring side writes it;
 the routing side reads it and needs nothing else — no dataset, no model, no server.
 Rescoring with a new prompt just means running the export again.
+
+## Publishing it
+
+The site is the repository itself: no build step, no bundler, nothing generated. In
+**Settings → Pages**, set the source to **Deploy from a branch**, branch `main`, folder
+**`/ (root)`** — not `/docs`, because the page reads `results/flood_tiles.geojson`, which
+lives outside `docs/`. The root [`index.html`](index.html) forwards the bare URL to
+`docs/`, and `.nojekyll` keeps Pages from running the files through Jekyll.
+
+Served that way the page fetches the flood scores and, if you have generated it, the
+street network, so a visitor sees the real thing without touching the file pickers.
 
 ## Limitations
 
