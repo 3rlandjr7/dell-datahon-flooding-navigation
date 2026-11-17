@@ -40,8 +40,10 @@ data. Click it once beforehand and note the numbers you'll be saying.
 
 **4. The failure, and the fix — this is the moment.** Click **Recheck pass: on**
 to turn it **off**.
-The route snaps back to the short line straight through the tile. On the real
-scores that's about a mile instead of six and a half.
+The route snaps back to the short line straight through the tile — on the real
+scores, a trip of about a mile that the recheck turns into a long detour. The
+exact figures depend on the scores and street network loaded, which is why step
+3 says to click it once beforehand.
 *"That's what our first pass would have told you to drive through. The model
 scored this tile 0% — muddy brown floodwater over a field doesn't look like
 water to it. So we added a second pass: ask yes/no 'is there water here' on

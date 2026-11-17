@@ -259,7 +259,7 @@ function setNetwork(built) {
 
 function nearestNode(pt) {
   const ci = Math.round(pt.lat / NODE_CELL), cj = Math.round(pt.lon / NODE_CELL);
-  let best = null, bestD = Infinity;
+  let best = null, bestD = Infinity, bestRing = -1;
   for (let ring = 0; ring < 40; ring++) {
     for (let i = ci - ring; i <= ci + ring; i++) {
       for (let j = cj - ring; j <= cj + ring; j++) {
@@ -269,11 +269,13 @@ function nearestNode(pt) {
         if (!cell) continue;
         for (const n of cell) {
           const d = metres(pt.lat, pt.lon, n.lat, n.lon);
-          if (d < bestD) { bestD = d; best = n; }
+          if (d < bestD) { bestD = d; best = n; bestRing = ring; }
         }
       }
     }
-    if (best && ring >= 1) break;      /* one extra ring covers the corners */
+    /* Rings are square, so a hit in one ring's corner can be farther than one
+       in the next ring's middle. Always look one ring past the best so far. */
+    if (best && ring > bestRing) break;
   }
   return best;
 }
@@ -672,31 +674,45 @@ function renderBanners() {
    so search for it rather than hard-coding a pair. */
 function findShowcase() {
   if (showcaseCache) return showcaseCache;
-  let best = { start: null, end: null, tile: null, gain: 0 };
-  const cands = TILES.filter(t => t.rechecked && classify(t.new_flood_pct) === "blocked")
-                     .sort((a, b) => (b.new_flood_pct || 0) - (a.new_flood_pct || 0))
-                     .slice(0, 14);
-  const saved = recheckOn;
-  search:
-  for (const t of cands) {
+  const savedRecheck = recheckOn, savedStart = start, savedEnd = end;
+
+  /* Candidate trips: a start and an end either side of a rechecked tile that
+     the recheck pass turned impassable. */
+  const pairs = [];
+  for (const t of TILES.filter(t => t.rechecked && classify(t.new_flood_pct) === "blocked")
+                       .sort((a, b) => (b.new_flood_pct || 0) - (a.new_flood_pct || 0))
+                       .slice(0, 14)) {
     const h = t.north - t.south, w = t.east - t.west;
     for (const k of [1.0, 1.6, 2.4]) {
       for (const axis of ["ew", "ns"]) {
         const a = axis === "ew" ? { lat: t.lat, lon: t.west - w * k } : { lat: t.north + h * k, lon: t.lon };
         const c = axis === "ew" ? { lat: t.lat, lon: t.east + w * k } : { lat: t.south - h * k, lon: t.lon };
-        if (!inBox(a) || !inBox(c)) continue;
-        start = a; end = c;
-        recheckOn = true;  reweight(); const on = computeRoute();
-        recheckOn = false; reweight(); const off = computeRoute();
-        if (on.status !== "ok" || off.status !== "ok") continue;
-        if (!(on.flooded_tiles_avoided || []).some(x => x.after_id === t.after_id)) continue;
-        const gain = on.distance_m - off.distance_m;
-        if (gain > best.gain) best = { start: a, end: c, tile: t, gain };
-        if (best.gain > 2400) break search;
+        if (inBox(a) && inBox(c)) pairs.push({ tile: t, start: a, end: c });
       }
     }
   }
-  recheckOn = saved; reweight();
+
+  /* Weight the network twice in all, not twice per candidate. Re-weighting
+     touches every edge, and a real street network is tens of thousands of them,
+     so doing it per probe would lock the page up for a minute. */
+  const route = phase => {
+    recheckOn = phase; reweight();
+    return pairs.map(p => { start = p.start; end = p.end; return computeRoute(); });
+  };
+  const withRecheck = route(true);
+  const without = route(false);
+
+  let best = { start: null, end: null, tile: null, gain: 0 };
+  for (let i = 0; i < pairs.length; i++) {
+    const on = withRecheck[i], off = without[i];
+    if (on.status !== "ok" || off.status !== "ok") continue;
+    if (!(on.flooded_tiles_avoided || []).some(x => x.after_id === pairs[i].tile.after_id)) continue;
+    const gain = on.distance_m - off.distance_m;
+    if (gain > best.gain) best = { start: pairs[i].start, end: pairs[i].end, tile: pairs[i].tile, gain };
+  }
+
+  recheckOn = savedRecheck; reweight();
+  start = savedStart; end = savedEnd;      /* probing clobbered these */
   showcaseCache = best;
   return best;
 }
@@ -797,8 +813,18 @@ function readJSON(input, onOk) {
   const hint = document.getElementById("file-hint");
   const reader = new FileReader();
   reader.onload = () => {
-    try { onOk(JSON.parse(reader.result), file.name); hint.style.color = ""; }
-    catch (err) { hint.textContent = "That file is not valid JSON."; hint.style.color = "var(--danger)"; }
+    let parsed;
+    try { parsed = JSON.parse(reader.result); }
+    catch (err) {
+      hint.textContent = "That file is not valid JSON."; hint.style.color = "var(--danger)"; return;
+    }
+    /* A well-formed file of the wrong shape is a different problem, and saying
+       "not valid JSON" sends you hunting for a syntax error that isn't there. */
+    try { onOk(parsed, file.name); hint.style.color = ""; }
+    catch (err) {
+      hint.textContent = "That file is JSON, but not what was expected: " + err.message + ".";
+      hint.style.color = "var(--danger)";
+    }
   };
   reader.onerror = () => { hint.textContent = "The file could not be read."; hint.style.color = "var(--danger)"; };
   reader.readAsText(file);
