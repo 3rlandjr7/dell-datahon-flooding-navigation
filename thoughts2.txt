@@ -1,0 +1,54 @@
+ways to improve for real public use
+
+    take gps photos during times of flooding to compare vs times of not flooding in major metropolitan areas
+
+    use percent comparisions for roadways instead of whole pictures (and train on roadway data instead of whole picture)
+
+    implement the heatmap to naviagtion software with a "flood mode" where the naviagation would try to avoid darkest areas (maybe darkness threshold changes based on current weather?)
+
+    other option is to use an openstreetmaps approach and have people volunteer flooding information for their streets along with a gauge of how bad it is currently raining, and use those 2 pieces of information to develop a flood score for those coordinates.
+
+
+
+
+
+
+what the process looked like
+    qwen graded it's thoughts for flooding in before/after photos
+
+    we looked into 75 photos to get human input to find inaccuracies in qwen and test fixes for the grading prompt
+
+    used our graded photos to develop heuristics (general rules for grading) such as
+        - green before and flat brown after = floodwater, not dirt (plowed fields and construction show texture, floodwater is flat and smooth)
+        - ground under trees and buildings counts as flooded when water surrounds them, the water just didn't reach the treetops or roofs
+    these guided our own grading. we tested them in qwen's prompt too, but they didn't help: showing qwen both photos at once made it read the camera color change as "green turned brown" and call almost everything flooded
+
+    qwen's biggest mistake was reading muddy water that fills the whole photo as bare dirt, scoring flooded tiles as 0%. we fixed it with a second check: for tiles with no new flood, qwen is asked a yes/no question about standing floodwater, and if it says yes it estimates the water percent again with a note that floodwater is present (show example: photo #70, qwen first said 0%, after the check 95%, we graded it 100%)
+
+    result on photos held back for testing: qwen agrees with us on flooded vs dry 91% of the time (up from 83%), but its percentages are still off by about 19 points on average
+
+
+
+
+final qwen prompts (each sent with one aerial photo)
+
+    pass 1, for every before and after photo:
+
+This is an overhead aerial photo of a ~530 m square area in the Houston, Texas region.
+Estimate what percent of the image is covered by water of any kind: rivers, ponds, reservoirs, or floodwater.
+Floodwater from the air is usually flat, opaque, muddy brown, tan or grey-brown with no texture,
+with tree crowns, rooftops and road edges sticking out of it.
+Answer with a single integer from 0 to 100 and nothing else.
+
+    new floodwater = after photo % minus before photo %
+
+    pass 2a, yes/no check on the after photo, only for tiles with no new flood:
+
+Is any of the ground in this overhead aerial photo covered by standing floodwater?
+Floodwater can be brown, tan, grey or dark, and can fill the whole frame so that only trees,
+roofs and road edges show. Bare soil, dirt fields and shadows are not water. Answer yes or no.
+
+    pass 2b, if the check says yes: this note, followed by the pass 1 prompt, on the after photo:
+
+This photo was taken just after Hurricane Harvey and contains standing floodwater.
+Muddy water filling most of the frame is water, not bare soil.
