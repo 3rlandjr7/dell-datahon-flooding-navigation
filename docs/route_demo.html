@@ -148,6 +148,8 @@
   }
   .endpoints .val { color: var(--ink-soft); font-variant-numeric: tabular-nums; }
   .hint { color: var(--ink-soft); font-size: 13px; margin: 10px 0 0; }
+  .hint code, #result-body code { overflow-wrap: anywhere; }
+  #result-body li { overflow-wrap: anywhere; }
 
   svg.map { width: 100%; height: auto; display: block; background: var(--map-bg); border-radius: 10px; border: 1px solid var(--line); }
   svg.map:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
@@ -984,10 +986,28 @@ function renderResult() {
 /* Ticket 6.2: built in code, never by the model, so they are always accurate. */
 function buildCautions(res) {
   const out = [];
+  /* Group by locality: a route through one neighbourhood can touch several
+     caution tiles, and repeating the same sentence per tile reads as a bug. */
+  const scored = new Map(), unscored = new Map();
   for (const t of res.caution_tiles || []) {
-    out.push(t.new_flood_pct === null || t.new_flood_pct === undefined
-      ? "No flood score for an area near " + t.locality + "."
-      : "Moderate flooding estimated (" + t.new_flood_pct + "% of the area) near " + t.locality + ".");
+    const pct = t.new_flood_pct;
+    const bucket = (pct === null || pct === undefined) ? unscored : scored;
+    if (!bucket.has(t.locality)) bucket.set(t.locality, []);
+    bucket.get(t.locality).push(pct);
+  }
+  for (const [locality, pcts] of scored) {
+    if (pcts.length === 1) {
+      out.push("Moderate flooding estimated (" + pcts[0] + "% of the area) near " + locality + ".");
+    } else {
+      const lo = Math.min(...pcts), hi = Math.max(...pcts);
+      out.push("Moderate flooding estimated on " + pcts.length + " stretches near " + locality +
+               " (" + (lo === hi ? lo + "%" : lo + "\u2013" + hi + "%") + " of the area).");
+    }
+  }
+  for (const [locality, list] of unscored) {
+    out.push(list.length === 1
+      ? "No flood score for an area near " + locality + "."
+      : "No flood score for " + list.length + " areas near " + locality + ".");
   }
   if (res.uncovered_m > 0) out.push(miles(res.uncovered_m).toFixed(1) + " mi of this route has no flood photos.");
   out.push("AI estimates can miss floodwater that looks like bare ground.");
