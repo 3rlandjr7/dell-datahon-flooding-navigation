@@ -3,20 +3,15 @@
 Target: 4:30 PM. Everything below runs from `docs/route_demo.html` with no server,
 no GB10 and no internet. Rehearse it once.
 
-## Before you start (2 minutes)
+## Before you start (1 minute)
 
-If the pipeline files are on this laptop, turn the sample data into your real scores:
+The page opens with sample scores. Switch it to the real ones: click
+**Load real scores** and pick `results/flood_tiles.geojson`, which is committed
+in this repo — 575 tiles, final scores, recheck included. The amber banner turns
+green and the map redraws from Qwen's actual output.
 
-```bash
-python3 scripts/export_tiles.py
-```
-
-It writes `results/flood_tiles.geojson` and prints how many tiles were rechecked.
-Then in the page: **Load real scores** → pick that file. The amber banner turns
-green and the whole map redraws from Qwen's actual output.
-
-If it doesn't run, **demo anyway**. The page works as-is; the banner tells the
-truth about the numbers and nobody has to pretend otherwise.
+Do this before anyone is watching, and check the banner is green. If you skip it,
+**demo anyway**: the banner tells the truth about the numbers either way.
 
 Open the page and leave it open:
 
@@ -68,6 +63,7 @@ network is down."*
 | Page won't open | `cd` into the repo first — `xdg-open docs/route_demo.html` from home fails |
 | Route doesn't appear | Press **Clear**, then **Showcase route** |
 | Judge asks if the numbers are real | Say yes if the banner is green, no if it's amber. Don't hedge. |
+| Judge asks about the streets | Be straight: the grid is simulated so the page runs offline. The flood data and routing rules are real. |
 | Judge asks about the live app | *"The routing rules on this page are the app's; it reads the same export and real OpenStreetMap roads."* |
 | Asked why not Google Maps | *"It has no idea which roads are flooded. Nobody is driving these streets to report it."* |
 
